@@ -20,14 +20,16 @@ import (
 	"context"
 	"time"
 
-	"github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/v2"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epv "k8s.io/kubernetes/test/e2e/framework/pv"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	"k8s.io/kubernetes/test/e2e/storage/utils"
+	admissionapi "k8s.io/pod-security-admission/api"
 )
 
 /*
@@ -48,6 +50,7 @@ Test Steps
 */
 var _ = utils.SIGDescribe("PersistentVolumes [Feature:vsphere][Feature:LabelSelector]", func() {
 	f := framework.NewDefaultFramework("pvclabelselector")
+	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 	var (
 		c          clientset.Interface
 		ns         string
@@ -66,7 +69,7 @@ var _ = utils.SIGDescribe("PersistentVolumes [Feature:vsphere][Feature:LabelSele
 		ns = f.Namespace.Name
 		Bootstrap(f)
 		nodeInfo = GetReadySchedulableRandomNodeInfo()
-		framework.ExpectNoError(framework.WaitForAllNodesSchedulable(c, framework.TestContext.NodeSchedulableTimeout))
+		framework.ExpectNoError(e2enode.WaitForAllNodesSchedulable(c, framework.TestContext.NodeSchedulableTimeout))
 		ssdlabels = make(map[string]string)
 		ssdlabels["volume-type"] = "ssd"
 		vvollabels = make(map[string]string)

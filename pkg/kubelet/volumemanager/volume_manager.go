@@ -155,7 +155,7 @@ type VolumeManager interface {
 	MarkVolumesAsReportedInUse(volumesReportedAsInUse []v1.UniqueVolumeName)
 }
 
-// podStateProvider can determine if a pod is is going to be terminated
+// podStateProvider can determine if a pod is going to be terminated
 type podStateProvider interface {
 	ShouldPodContainersBeTerminating(k8stypes.UID) bool
 	ShouldPodRuntimeBeRemoved(k8stypes.UID) bool
@@ -183,20 +183,19 @@ func NewVolumeManager(
 	hostutil hostutil.HostUtils,
 	kubeletPodsDir string,
 	recorder record.EventRecorder,
-	checkNodeCapabilitiesBeforeMount bool,
 	keepTerminatedPodVolumes bool,
 	blockVolumePathHandler volumepathhandler.BlockVolumePathHandler) VolumeManager {
 
+	seLinuxTranslator := util.NewSELinuxLabelTranslator()
 	vm := &volumeManager{
 		kubeClient:          kubeClient,
 		volumePluginMgr:     volumePluginMgr,
-		desiredStateOfWorld: cache.NewDesiredStateOfWorld(volumePluginMgr),
+		desiredStateOfWorld: cache.NewDesiredStateOfWorld(volumePluginMgr, seLinuxTranslator),
 		actualStateOfWorld:  cache.NewActualStateOfWorld(nodeName, volumePluginMgr),
 		operationExecutor: operationexecutor.NewOperationExecutor(operationexecutor.NewOperationGenerator(
 			kubeClient,
 			volumePluginMgr,
 			recorder,
-			checkNodeCapabilitiesBeforeMount,
 			blockVolumePathHandler)),
 	}
 
@@ -538,7 +537,7 @@ func filterUnmountedVolumes(mountedVolumes sets.String, expectedVolumes []string
 // getExpectedVolumes returns a list of volumes that must be mounted in order to
 // consider the volume setup step for this pod satisfied.
 func getExpectedVolumes(pod *v1.Pod) []string {
-	mounts, devices := util.GetPodVolumeNames(pod)
+	mounts, devices, _ := util.GetPodVolumeNames(pod)
 	return mounts.Union(devices).UnsortedList()
 }
 

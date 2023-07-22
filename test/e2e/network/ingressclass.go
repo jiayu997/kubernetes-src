@@ -19,7 +19,6 @@ package network
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	networkingv1 "k8s.io/api/networking/v1"
@@ -32,13 +31,15 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/e2e/network/common"
+	admissionapi "k8s.io/pod-security-admission/api"
 	utilpointer "k8s.io/utils/pointer"
 
-	"github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/v2"
 )
 
 var _ = common.SIGDescribe("IngressClass [Feature:Ingress]", func() {
 	f := framework.NewDefaultFramework("ingressclass")
+	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 	var cs clientset.Interface
 	ginkgo.BeforeEach(func() {
 		cs = f.ClientSet
@@ -72,7 +73,7 @@ var _ = common.SIGDescribe("IngressClass [Feature:Ingress]", func() {
 		}
 	})
 
-	ginkgo.It("should prevent Ingress creation if more than 1 IngressClass marked as default [Serial]", func() {
+	ginkgo.It("should choose the one with the later CreationTimestamp, if equal the one with the lower name when two ingressClasses are marked as default[Serial]", func() {
 		ingressClass1, err := createIngressClass(cs, "ingressclass1", true, f.UniqueName)
 		framework.ExpectNoError(err)
 		defer deleteIngressClass(cs, ingressClass1.Name)
@@ -81,19 +82,42 @@ var _ = common.SIGDescribe("IngressClass [Feature:Ingress]", func() {
 		framework.ExpectNoError(err)
 		defer deleteIngressClass(cs, ingressClass2.Name)
 
+		expectedName := ingressClass1.Name
+		if ingressClass2.CreationTimestamp.UnixNano() > ingressClass1.CreationTimestamp.UnixNano() {
+			expectedName = ingressClass2.Name
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
 		// the admission controller may take a few seconds to observe both ingress classes
-		expectedErr := "2 default IngressClasses were found, only 1 allowed"
-		var lastErr error
 		if err := wait.Poll(time.Second, time.Minute, func() (bool, error) {
-			defer cs.NetworkingV1().Ingresses(f.Namespace.Name).Delete(context.TODO(), "ingress1", metav1.DeleteOptions{})
-			_, err := createBasicIngress(cs, f.Namespace.Name)
-			if err == nil {
+			classes, err := cs.NetworkingV1().IngressClasses().List(ctx, metav1.ListOptions{})
+			if err != nil {
 				return false, nil
 			}
-			lastErr = err
-			return strings.Contains(err.Error(), expectedErr), nil
+			cntDefault := 0
+			for _, class := range classes.Items {
+				if class.Annotations[networkingv1.AnnotationIsDefaultIngressClass] == "true" {
+					cntDefault++
+				}
+			}
+			if cntDefault < 2 {
+				return false, nil
+			}
+			ingress, err := createBasicIngress(cs, f.Namespace.Name)
+			if err != nil {
+				return false, nil
+			}
+			if ingress.Spec.IngressClassName == nil {
+				return false, fmt.Errorf("expected IngressClassName to be set by Admission Controller")
+			}
+			if *ingress.Spec.IngressClassName != expectedName {
+				return false, fmt.Errorf("expected ingress class %s but created with %s", expectedName, *ingress.Spec.IngressClassName)
+			}
+			return true, nil
 		}); err != nil {
-			framework.Failf("Expected error to contain %s, got %s", expectedErr, lastErr.Error())
+			framework.Failf("Failed to create ingress when two ingressClasses are marked as default ,got error %v", err)
 		}
 	})
 
@@ -182,6 +206,7 @@ func deleteIngressClass(cs clientset.Interface, name string) {
 
 var _ = common.SIGDescribe("IngressClass API", func() {
 	f := framework.NewDefaultFramework("ingressclass")
+	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 	var cs clientset.Interface
 	ginkgo.BeforeEach(func() {
 		cs = f.ClientSet
@@ -217,7 +242,9 @@ var _ = common.SIGDescribe("IngressClass API", func() {
 					}
 				}
 			}
-			framework.ExpectEqual(found, true, fmt.Sprintf("expected networking API group/version, got %#v", discoveryGroups.Groups))
+			if !found {
+				framework.Failf("expected networking API group/version, got %#v", discoveryGroups.Groups)
+			}
 		}
 		ginkgo.By("getting /apis/networking.k8s.io")
 		{
@@ -231,7 +258,9 @@ var _ = common.SIGDescribe("IngressClass API", func() {
 					break
 				}
 			}
-			framework.ExpectEqual(found, true, fmt.Sprintf("expected networking API version, got %#v", group.Versions))
+			if !found {
+				framework.Failf("expected networking API version, got %#v", group.Versions)
+			}
 		}
 
 		ginkgo.By("getting /apis/networking.k8s.io" + icVersion)
@@ -245,7 +274,9 @@ var _ = common.SIGDescribe("IngressClass API", func() {
 					foundIC = true
 				}
 			}
-			framework.ExpectEqual(foundIC, true, fmt.Sprintf("expected ingressclasses, got %#v", resources.APIResources))
+			if !foundIC {
+				framework.Failf("expected ingressclasses, got %#v", resources.APIResources)
+			}
 		}
 
 		// IngressClass resource create/read/update/watch verbs
@@ -289,10 +320,14 @@ var _ = common.SIGDescribe("IngressClass API", func() {
 		for sawAnnotations := false; !sawAnnotations; {
 			select {
 			case evt, ok := <-icWatch.ResultChan():
-				framework.ExpectEqual(ok, true, "watch channel should not close")
+				if !ok {
+					framework.Fail("watch channel should not close")
+				}
 				framework.ExpectEqual(evt.Type, watch.Modified)
 				watchedIngress, isIngress := evt.Object.(*networkingv1.IngressClass)
-				framework.ExpectEqual(isIngress, true, fmt.Sprintf("expected Ingress, got %T", evt.Object))
+				if !isIngress {
+					framework.Failf("expected Ingress, got %T", evt.Object)
+				}
 				if watchedIngress.Annotations["patched"] == "true" {
 					framework.Logf("saw patched and updated annotations")
 					sawAnnotations = true
@@ -310,7 +345,9 @@ var _ = common.SIGDescribe("IngressClass API", func() {
 		err = icClient.Delete(context.TODO(), ingressClass1.Name, metav1.DeleteOptions{})
 		framework.ExpectNoError(err)
 		_, err = icClient.Get(context.TODO(), ingressClass1.Name, metav1.GetOptions{})
-		framework.ExpectEqual(apierrors.IsNotFound(err), true, fmt.Sprintf("expected 404, got %#v", err))
+		if !apierrors.IsNotFound(err) {
+			framework.Failf("expected 404, got %#v", err)
+		}
 		ics, err = icClient.List(context.TODO(), metav1.ListOptions{LabelSelector: "ingressclass=" + f.UniqueName})
 		framework.ExpectNoError(err)
 		framework.ExpectEqual(len(ics.Items), 2, "filtered list should have 2 items")

@@ -35,6 +35,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	internalapi "k8s.io/cri-api/pkg/apis"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
+	"k8s.io/kubernetes/pkg/kubelet/cri/remote"
 	"k8s.io/kubernetes/pkg/kubelet/types"
 	"k8s.io/kubernetes/pkg/util/tail"
 )
@@ -418,14 +419,18 @@ func ReadLogs(ctx context.Context, path, containerID string, opts *LogOptions, r
 	}
 }
 
-func isContainerRunning(id string, r internalapi.RuntimeService) (bool, error) {
-	s, err := r.ContainerStatus(id)
+func isContainerRunning(ctx context.Context, id string, r internalapi.RuntimeService) (bool, error) {
+	resp, err := r.ContainerStatus(ctx, id, false)
 	if err != nil {
 		return false, err
 	}
+	status := resp.GetStatus()
+	if status == nil {
+		return false, remote.ErrContainerStatusNil
+	}
 	// Only keep following container log when it is running.
-	if s.State != runtimeapi.ContainerState_CONTAINER_RUNNING {
-		klog.V(5).InfoS("Container is not running", "containerId", id, "state", s.State)
+	if status.State != runtimeapi.ContainerState_CONTAINER_RUNNING {
+		klog.V(5).InfoS("Container is not running", "containerId", id, "state", status.State)
 		// Do not return error because it's normal that the container stops
 		// during waiting.
 		return false, nil
@@ -438,7 +443,7 @@ func isContainerRunning(id string, r internalapi.RuntimeService) (bool, error) {
 // the error is error happens during waiting new logs.
 func waitLogs(ctx context.Context, id string, w *fsnotify.Watcher, runtimeService internalapi.RuntimeService) (bool, bool, error) {
 	// no need to wait if the pod is not running
-	if running, err := isContainerRunning(id, runtimeService); !running {
+	if running, err := isContainerRunning(ctx, id, runtimeService); !running {
 		return false, false, err
 	}
 	errRetry := 5

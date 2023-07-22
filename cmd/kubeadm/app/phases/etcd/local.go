@@ -146,7 +146,7 @@ func CreateStackedEtcdStaticPodManifestFile(client clientset.Interface, manifest
 
 	var cluster []etcdutil.Member
 	if isDryRun {
-		fmt.Printf("[dryrun] Would add etcd member: %s\n", etcdPeerAddress)
+		fmt.Printf("[etcd] Would add etcd member: %s\n", etcdPeerAddress)
 	} else {
 		klog.V(1).Infof("[etcd] Adding etcd member: %s", etcdPeerAddress)
 		cluster, err = etcdClient.AddMember(nodeName, etcdPeerAddress)
@@ -164,7 +164,7 @@ func CreateStackedEtcdStaticPodManifestFile(client clientset.Interface, manifest
 	}
 
 	if isDryRun {
-		fmt.Println("[dryrun] Would wait for the new etcd member to join the cluster")
+		fmt.Println("[etcd] Would wait for the new etcd member to join the cluster")
 		return nil
 	}
 
@@ -203,8 +203,8 @@ func GetEtcdPodSpec(cfg *kubeadmapi.ClusterConfiguration, endpoint *kubeadmapi.A
 					v1.ResourceMemory: resource.MustParse("100Mi"),
 				},
 			},
-			LivenessProbe: staticpodutil.LivenessProbe(probeHostname, "/health", probePort, probeScheme),
-			StartupProbe:  staticpodutil.StartupProbe(probeHostname, "/health", probePort, probeScheme, cfg.APIServer.TimeoutForControlPlane),
+			LivenessProbe: staticpodutil.LivenessProbe(probeHostname, "/health?exclude=NOSPACE&serializable=true", probePort, probeScheme),
+			StartupProbe:  staticpodutil.StartupProbe(probeHostname, "/health?serializable=false", probePort, probeScheme, cfg.APIServer.TimeoutForControlPlane),
 		},
 		etcdMounts,
 		// etcd will listen on the advertise address of the API server, in a different port (2379)
@@ -239,6 +239,7 @@ func getEtcdCommand(cfg *kubeadmapi.ClusterConfiguration, endpoint *kubeadmapi.A
 		"peer-client-cert-auth":              "true",
 		"snapshot-count":                     "10000",
 		"listen-metrics-urls":                fmt.Sprintf("http://%s", net.JoinHostPort(etcdLocalhostAddress, strconv.Itoa(kubeadmconstants.EtcdMetricsPort))),
+		"experimental-watch-progress-notify-interval": "5s",
 	}
 
 	if len(initialCluster) == 0 {
@@ -267,8 +268,8 @@ func prepareAndWriteEtcdStaticPod(manifestDir string, patchesDir string, cfg *ku
 	var err error
 	if features.Enabled(cfg.FeatureGates, features.RootlessControlPlane) {
 		if isDryRun {
-			fmt.Printf("[dryrun] Would create users and groups for %q to run as non-root\n", kubeadmconstants.Etcd)
-			fmt.Printf("[dryrun] Would update static pod manifest for %q to run run as non-root\n", kubeadmconstants.Etcd)
+			fmt.Printf("[etcd] Would create users and groups for %q to run as non-root\n", kubeadmconstants.Etcd)
+			fmt.Printf("[etcd] Would update static pod manifest for %q to run run as non-root\n", kubeadmconstants.Etcd)
 		} else {
 			usersAndGroups, err = staticpodutil.GetUsersAndGroups()
 			if err != nil {

@@ -150,7 +150,7 @@ func newBaseEndpointInfo(IP, nodeName, zone string, port int, isLocal bool,
 	}
 }
 
-type makeEndpointFunc func(info *BaseEndpointInfo) Endpoint
+type makeEndpointFunc func(info *BaseEndpointInfo, svcPortName *ServicePortName) Endpoint
 
 // This handler is invoked by the apply function on every change. This function should not modify the
 // EndpointsMap's but just use the changes for any Proxier specific cleanup.
@@ -300,6 +300,24 @@ func (ect *EndpointChangeTracker) EndpointSliceUpdate(endpointSlice *discovery.E
 	}
 
 	return changeNeeded
+}
+
+// PendingChanges returns a set whose keys are the names of the services whose endpoints
+// have changed since the last time ect was used to update an EndpointsMap. (You must call
+// this _before_ calling em.Update(ect).)
+func (ect *EndpointChangeTracker) PendingChanges() sets.String {
+	if ect.endpointSliceCache != nil {
+		return ect.endpointSliceCache.pendingChanges()
+	}
+
+	ect.lock.Lock()
+	defer ect.lock.Unlock()
+
+	changes := sets.NewString()
+	for name := range ect.items {
+		changes.Insert(name.String())
+	}
+	return changes
 }
 
 // checkoutChanges returns a list of pending endpointsChanges and marks them as
@@ -464,7 +482,7 @@ func (ect *EndpointChangeTracker) endpointsToEndpointsMap(endpoints *v1.Endpoint
 				// Zone information is only supported with EndpointSlice API
 				baseEndpointInfo := newBaseEndpointInfo(addr.IP, nodeName, "", int(port.Port), isLocal, isReady, isServing, isTerminating, zoneHints)
 				if ect.makeEndpointInfo != nil {
-					endpointsMap[svcPortName] = append(endpointsMap[svcPortName], ect.makeEndpointInfo(baseEndpointInfo))
+					endpointsMap[svcPortName] = append(endpointsMap[svcPortName], ect.makeEndpointInfo(baseEndpointInfo, &svcPortName))
 				} else {
 					endpointsMap[svcPortName] = append(endpointsMap[svcPortName], baseEndpointInfo)
 				}

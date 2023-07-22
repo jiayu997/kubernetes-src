@@ -143,7 +143,7 @@ limitations under the License.
 // The KubeProxyConfiguration type should be used to change the configuration passed to kube-proxy instances deployed
 // in the cluster. If this object is not provided or provided only partially, kubeadm applies defaults.
 //
-// See https://kubernetes.io/docs/reference/command-line-tools-reference/kube-proxy/ or https://godoc.org/k8s.io/kube-proxy/config/v1alpha1#KubeProxyConfiguration
+// See https://kubernetes.io/docs/reference/command-line-tools-reference/kube-proxy/ or https://pkg.go.dev/k8s.io/kube-proxy/config/v1alpha1#KubeProxyConfiguration
 // for kube proxy official documentation.
 //
 //	apiVersion: kubelet.config.k8s.io/v1beta1
@@ -153,113 +153,113 @@ limitations under the License.
 // The KubeletConfiguration type should be used to change the configurations that will be passed to all kubelet instances
 // deployed in the cluster. If this object is not provided or provided only partially, kubeadm applies defaults.
 //
-// See https://kubernetes.io/docs/reference/command-line-tools-reference/kubelet/ or https://godoc.org/k8s.io/kubelet/config/v1beta1#KubeletConfiguration
+// See https://kubernetes.io/docs/reference/command-line-tools-reference/kubelet/ or https://pkg.go.dev/k8s.io/kubelet/config/v1beta1#KubeletConfiguration
 // for kubelet official documentation.
 //
 // Here is a fully populated example of a single YAML file containing multiple
 // configuration types to be used during a `kubeadm init` run.
 //
-//		apiVersion: kubeadm.k8s.io/v1beta3
-//		kind: InitConfiguration
-//		bootstrapTokens:
-//		- token: "9a08jv.c0izixklcxtmnze7"
-//		  description: "kubeadm bootstrap token"
-//		  ttl: "24h"
-//		- token: "783bde.3f89s0fje9f38fhf"
-//		  description: "another bootstrap token"
-//		  usages:
-//		  - authentication
-//		  - signing
-//		  groups:
-//		  - system:bootstrappers:kubeadm:default-node-token
-//		nodeRegistration:
-//		  name: "ec2-10-100-0-1"
-//		  criSocket: "/var/run/dockershim.sock"
-//		  taints:
-//		  - key: "kubeadmNode"
-//		    value: "master"
-//		    effect: "NoSchedule"
-//		  kubeletExtraArgs:
-//		    v: 4
-//		  ignorePreflightErrors:
-//		  - IsPrivilegedUser
-//	   imagePullPolicy: "IfNotPresent"
-//		localAPIEndpoint:
-//		  advertiseAddress: "10.100.0.1"
-//		  bindPort: 6443
-//		certificateKey: "e6a2eb8581237ab72a4f494f30285ec12a9694d750b9785706a83bfcbbbd2204"
-//	 skipPhases:
-//	 - addon/kube-proxy
-//		---
-//		apiVersion: kubeadm.k8s.io/v1beta3
-//		kind: ClusterConfiguration
-//		etcd:
-//		  # one of local or external
-//		  local:
-//		    imageRepository: "registry.k8s.io"
-//		    imageTag: "3.2.24"
-//		    dataDir: "/var/lib/etcd"
-//		    extraArgs:
-//		      listen-client-urls: "http://10.100.0.1:2379"
-//		    serverCertSANs:
-//		    -  "ec2-10-100-0-1.compute-1.amazonaws.com"
-//		    peerCertSANs:
-//		    - "10.100.0.1"
-//		  # external:
-//		    # endpoints:
-//		    # - "10.100.0.1:2379"
-//		    # - "10.100.0.2:2379"
-//		    # caFile: "/etcd/kubernetes/pki/etcd/etcd-ca.crt"
-//		    # certFile: "/etcd/kubernetes/pki/etcd/etcd.crt"
-//		    # keyFile: "/etcd/kubernetes/pki/etcd/etcd.key"
-//		networking:
-//		  serviceSubnet: "10.96.0.0/16"
-//		  podSubnet: "10.244.0.0/24"
-//		  dnsDomain: "cluster.local"
-//		kubernetesVersion: "v1.21.0"
-//		controlPlaneEndpoint: "10.100.0.1:6443"
-//		apiServer:
-//		  extraArgs:
-//		    authorization-mode: "Node,RBAC"
-//		  extraVolumes:
-//		  - name: "some-volume"
-//		    hostPath: "/etc/some-path"
-//		    mountPath: "/etc/some-pod-path"
-//		    readOnly: false
-//		    pathType: File
-//		  certSANs:
-//		  - "10.100.1.1"
-//		  - "ec2-10-100-0-1.compute-1.amazonaws.com"
-//		  timeoutForControlPlane: 4m0s
-//		controllerManager:
-//		  extraArgs:
-//		    "node-cidr-mask-size": "20"
-//		  extraVolumes:
-//		  - name: "some-volume"
-//		    hostPath: "/etc/some-path"
-//		    mountPath: "/etc/some-pod-path"
-//		    readOnly: false
-//		    pathType: File
-//		scheduler:
-//		  extraArgs:
-//		    address: "10.100.0.1"
-//		  extraVolumes:
-//		  - name: "some-volume"
-//		    hostPath: "/etc/some-path"
-//		    mountPath: "/etc/some-pod-path"
-//		    readOnly: false
-//		    pathType: File
-//		certificatesDir: "/etc/kubernetes/pki"
-//		imageRepository: "registry.k8s.io"
-//		clusterName: "example-cluster"
-//		---
-//		apiVersion: kubelet.config.k8s.io/v1beta1
-//		kind: KubeletConfiguration
-//		# kubelet specific options here
-//		---
-//		apiVersion: kubeproxy.config.k8s.io/v1alpha1
-//		kind: KubeProxyConfiguration
-//		# kube-proxy specific options here
+//	apiVersion: kubeadm.k8s.io/v1beta3
+//	kind: InitConfiguration
+//	bootstrapTokens:
+//	- token: "9a08jv.c0izixklcxtmnze7"
+//	  description: "kubeadm bootstrap token"
+//	  ttl: "24h"
+//	- token: "783bde.3f89s0fje9f38fhf"
+//	  description: "another bootstrap token"
+//	  usages:
+//	  - authentication
+//	  - signing
+//	  groups:
+//	  - system:bootstrappers:kubeadm:default-node-token
+//	nodeRegistration:
+//	  name: "ec2-10-100-0-1"
+//	  criSocket: "unix:///var/run/containerd/containerd.sock"
+//	  taints:
+//	  - key: "kubeadmNode"
+//	    value: "someValue"
+//	    effect: "NoSchedule"
+//	  kubeletExtraArgs:
+//	    v: 4
+//	  ignorePreflightErrors:
+//	  - IsPrivilegedUser
+//	  imagePullPolicy: "IfNotPresent"
+//	localAPIEndpoint:
+//	  advertiseAddress: "10.100.0.1"
+//	  bindPort: 6443
+//	certificateKey: "e6a2eb8581237ab72a4f494f30285ec12a9694d750b9785706a83bfcbbbd2204"
+//	skipPhases:
+//	- addon/kube-proxy
+//	---
+//	apiVersion: kubeadm.k8s.io/v1beta3
+//	kind: ClusterConfiguration
+//	etcd:
+//	  # one of local or external
+//	  local:
+//	    imageRepository: "registry.k8s.io"
+//	    imageTag: "3.2.24"
+//	    dataDir: "/var/lib/etcd"
+//	    extraArgs:
+//	      listen-client-urls: "http://10.100.0.1:2379"
+//	    serverCertSANs:
+//	    -  "ec2-10-100-0-1.compute-1.amazonaws.com"
+//	    peerCertSANs:
+//	    - "10.100.0.1"
+//	  # external:
+//	    # endpoints:
+//	    # - "10.100.0.1:2379"
+//	    # - "10.100.0.2:2379"
+//	    # caFile: "/etcd/kubernetes/pki/etcd/etcd-ca.crt"
+//	    # certFile: "/etcd/kubernetes/pki/etcd/etcd.crt"
+//	    # keyFile: "/etcd/kubernetes/pki/etcd/etcd.key"
+//	networking:
+//	  serviceSubnet: "10.96.0.0/16"
+//	  podSubnet: "10.244.0.0/24"
+//	  dnsDomain: "cluster.local"
+//	kubernetesVersion: "v1.21.0"
+//	controlPlaneEndpoint: "10.100.0.1:6443"
+//	apiServer:
+//	  extraArgs:
+//	    authorization-mode: "Node,RBAC"
+//	  extraVolumes:
+//	  - name: "some-volume"
+//	    hostPath: "/etc/some-path"
+//	    mountPath: "/etc/some-pod-path"
+//	    readOnly: false
+//	    pathType: File
+//	  certSANs:
+//	  - "10.100.1.1"
+//	  - "ec2-10-100-0-1.compute-1.amazonaws.com"
+//	  timeoutForControlPlane: 4m0s
+//	controllerManager:
+//	  extraArgs:
+//	    "node-cidr-mask-size": "20"
+//	  extraVolumes:
+//	  - name: "some-volume"
+//	    hostPath: "/etc/some-path"
+//	    mountPath: "/etc/some-pod-path"
+//	    readOnly: false
+//	    pathType: File
+//	scheduler:
+//	  extraArgs:
+//	    address: "10.100.0.1"
+//	  extraVolumes:
+//	  - name: "some-volume"
+//	    hostPath: "/etc/some-path"
+//	    mountPath: "/etc/some-pod-path"
+//	    readOnly: false
+//	    pathType: File
+//	certificatesDir: "/etc/kubernetes/pki"
+//	imageRepository: "registry.k8s.io"
+//	clusterName: "example-cluster"
+//	---
+//	apiVersion: kubelet.config.k8s.io/v1beta1
+//	kind: KubeletConfiguration
+//	# kubelet specific options here
+//	---
+//	apiVersion: kubeproxy.config.k8s.io/v1alpha1
+//	kind: KubeProxyConfiguration
+//	# kube-proxy specific options here
 //
 // # Kubeadm join configuration types
 //

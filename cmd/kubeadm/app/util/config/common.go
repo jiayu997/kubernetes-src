@@ -70,7 +70,9 @@ func validateSupportedVersion(gv schema.GroupVersion, allowDeprecated bool) erro
 	}
 
 	// Deprecated API versions are supported by us, but can only be used for migration.
-	deprecatedAPIVersions := map[string]struct{}{}
+	deprecatedAPIVersions := map[string]struct{}{
+		"kubeadm.k8s.io/v1beta2": {},
+	}
 
 	gvString := gv.String()
 
@@ -92,7 +94,7 @@ func NormalizeKubernetesVersion(cfg *kubeadmapi.ClusterConfiguration) error {
 	isCIVersion := kubeadmutil.KubernetesIsCIVersion(cfg.KubernetesVersion)
 
 	// Requested version is automatic CI build, thus use KubernetesCI Image Repository for core images
-	if isCIVersion {
+	if isCIVersion && cfg.ImageRepository == kubeadmapiv1.DefaultImageRepository {
 		cfg.CIImageRepository = constants.DefaultCIImageRepository
 	}
 
@@ -123,8 +125,8 @@ func NormalizeKubernetesVersion(cfg *kubeadmapi.ClusterConfiguration) error {
 	mcpVersion := constants.MinimumControlPlaneVersion
 	versionInfo := componentversion.Get()
 	if isKubeadmPrereleaseVersion(&versionInfo, k8sVersion, mcpVersion) {
-		klog.V(1).Infof("WARNING: tolerating control plane version %s, assuming that k8s version %s is not released yet",
-			cfg.KubernetesVersion, mcpVersion)
+		klog.V(1).Infof("WARNING: tolerating control plane version %s as a pre-release version", cfg.KubernetesVersion)
+
 		return nil
 	}
 	// If not a pre-release version, handle the validation normally.

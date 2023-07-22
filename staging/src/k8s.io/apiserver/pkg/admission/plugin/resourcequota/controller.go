@@ -115,7 +115,7 @@ func NewQuotaEvaluator(quotaAccessor QuotaAccessor, ignoredResources map[schema.
 		config = &resourcequotaapi.Configuration{}
 	}
 
-	return &quotaEvaluator{
+	evaluator := &quotaEvaluator{
 		quotaAccessor:       quotaAccessor,
 		lockAcquisitionFunc: lockAcquisitionFunc,
 
@@ -131,15 +131,28 @@ func NewQuotaEvaluator(quotaAccessor QuotaAccessor, ignoredResources map[schema.
 		stopCh:  stopCh,
 		config:  config,
 	}
+
+	// The queue underneath is starting a goroutine for metrics
+	// exportint that is only stopped on calling ShutDown.
+	// Given that QuotaEvaluator is created for each layer of apiserver
+	// and often not started for some of those (e.g. aggregated apiserver)
+	// we explicitly shut it down on stopCh signal even if it wasn't
+	// effectively started.
+	go evaluator.shutdownOnStop()
+
+	return evaluator
 }
 
-// Run begins watching and syncing.
-func (e *quotaEvaluator) run() {
+// start begins watching and syncing.
+func (e *quotaEvaluator) start() {
 	defer utilruntime.HandleCrash()
 
 	for i := 0; i < e.workers; i++ {
 		go wait.Until(e.doWork, time.Second, e.stopCh)
 	}
+}
+
+func (e *quotaEvaluator) shutdownOnStop() {
 	<-e.stopCh
 	klog.Infof("Shutting down quota evaluator")
 	e.queue.ShutDown()
@@ -380,9 +393,7 @@ func getMatchedLimitedScopes(evaluator quota.Evaluator, inputObject runtime.Obje
 			klog.ErrorS(err, "Error while matching limited Scopes")
 			return []corev1.ScopedResourceSelectorRequirement{}, err
 		}
-		for _, scope := range matched {
-			scopes = append(scopes, scope)
-		}
+		scopes = append(scopes, matched...)
 	}
 	return scopes, nil
 }
@@ -442,13 +453,10 @@ func CheckRequest(quotas []corev1.ResourceQuota, a admission.Attributes, evaluat
 		if err != nil {
 			return nil, fmt.Errorf("error matching scopes of quota %s, err: %v", resourceQuota.Name, err)
 		}
-		for _, scope := range localRestrictedScopes {
-			restrictedScopes = append(restrictedScopes, scope)
-		}
+		restrictedScopes = append(restrictedScopes, localRestrictedScopes...)
 
 		match, err := evaluator.Matches(&resourceQuota, inputObject)
 		if err != nil {
-			klog.Errorf("Error occurred while matching resource quota, %v, against input object. Err: %v", resourceQuota, err)
 			klog.ErrorS(err, "Error occurred while matching resource quota against input object",
 				"resourceQuota", resourceQuota)
 			return quotas, err
@@ -582,17 +590,13 @@ func getScopeSelectorsFromQuota(quota corev1.ResourceQuota) []corev1.ScopedResou
 			Operator:  corev1.ScopeSelectorOpExists})
 	}
 	if quota.Spec.ScopeSelector != nil {
-		for _, scopeSelector := range quota.Spec.ScopeSelector.MatchExpressions {
-			selectors = append(selectors, scopeSelector)
-		}
+		selectors = append(selectors, quota.Spec.ScopeSelector.MatchExpressions...)
 	}
 	return selectors
 }
 
 func (e *quotaEvaluator) Evaluate(a admission.Attributes) error {
-	e.init.Do(func() {
-		go e.run()
-	})
+	e.init.Do(e.start)
 
 	// is this resource ignored?
 	gvr := a.GetResource()

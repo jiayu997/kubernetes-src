@@ -22,8 +22,12 @@ package app
 import (
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,153 +39,10 @@ import (
 	clientgotesting "k8s.io/client-go/testing"
 
 	proxyconfigapi "k8s.io/kubernetes/pkg/proxy/apis/config"
-	"k8s.io/kubernetes/pkg/proxy/ipvs"
 	proxyutiliptables "k8s.io/kubernetes/pkg/proxy/util/iptables"
 	utiliptables "k8s.io/kubernetes/pkg/util/iptables"
 	utiliptablestest "k8s.io/kubernetes/pkg/util/iptables/testing"
 )
-
-type fakeIPSetVersioner struct {
-	version string // what to return
-	err     error  // what to return
-}
-
-func (fake *fakeIPSetVersioner) GetVersion() (string, error) {
-	return fake.version, fake.err
-}
-
-type fakeKernelCompatTester struct {
-	ok bool
-}
-
-func (fake *fakeKernelCompatTester) IsCompatible() error {
-	if !fake.ok {
-		return fmt.Errorf("error")
-	}
-	return nil
-}
-
-// fakeKernelHandler implements KernelHandler.
-type fakeKernelHandler struct {
-	modules       []string
-	kernelVersion string
-}
-
-func (fake *fakeKernelHandler) GetModules() ([]string, error) {
-	return fake.modules, nil
-}
-
-func (fake *fakeKernelHandler) GetKernelVersion() (string, error) {
-	return fake.kernelVersion, nil
-}
-
-func Test_getProxyMode(t *testing.T) {
-	var cases = []struct {
-		flag          string
-		ipsetVersion  string
-		kmods         []string
-		kernelVersion string
-		kernelCompat  bool
-		ipsetError    error
-		expected      string
-		scheduler     string
-	}{
-		{ // flag says userspace
-			flag:     "userspace",
-			expected: proxyModeUserspace,
-		},
-		{ // flag says iptables, kernel not compatible
-			flag:         "iptables",
-			kernelCompat: false,
-			expected:     proxyModeUserspace,
-		},
-		{ // flag says iptables, kernel is compatible
-			flag:         "iptables",
-			kernelCompat: true,
-			expected:     proxyModeIPTables,
-		},
-		{ // detect, kernel not compatible
-			flag:         "",
-			kernelCompat: false,
-			expected:     proxyModeUserspace,
-		},
-		{ // detect, kernel is compatible
-			flag:         "",
-			kernelCompat: true,
-			expected:     proxyModeIPTables,
-		},
-		{ // flag says ipvs, ipset version ok, kernel modules installed for linux kernel before 4.19
-			flag:          "ipvs",
-			kmods:         []string{"ip_vs", "ip_vs_rr", "ip_vs_wrr", "ip_vs_sh", "nf_conntrack_ipv4"},
-			kernelVersion: "4.18",
-			ipsetVersion:  ipvs.MinIPSetCheckVersion,
-			expected:      proxyModeIPVS,
-			scheduler:     "rr",
-		},
-		{ // flag says ipvs, ipset version ok, kernel modules installed for linux kernel 4.19
-			flag:          "ipvs",
-			kmods:         []string{"ip_vs", "ip_vs_rr", "ip_vs_wrr", "ip_vs_sh", "nf_conntrack"},
-			kernelVersion: "4.19",
-			ipsetVersion:  ipvs.MinIPSetCheckVersion,
-			expected:      proxyModeIPVS,
-			scheduler:     "rr",
-		},
-		{ // flag says ipvs, ipset version too low, fallback on iptables mode
-			flag:          "ipvs",
-			kmods:         []string{"ip_vs", "ip_vs_rr", "ip_vs_wrr", "ip_vs_sh", "nf_conntrack"},
-			kernelVersion: "4.19",
-			ipsetVersion:  "0.0",
-			kernelCompat:  true,
-			expected:      proxyModeIPTables,
-		},
-		{ // flag says ipvs, bad ipset version, fallback on iptables mode
-			flag:          "ipvs",
-			kmods:         []string{"ip_vs", "ip_vs_rr", "ip_vs_wrr", "ip_vs_sh", "nf_conntrack"},
-			kernelVersion: "4.19",
-			ipsetVersion:  "a.b.c",
-			kernelCompat:  true,
-			expected:      proxyModeIPTables,
-		},
-		{ // flag says ipvs, required kernel modules are not installed, fallback on iptables mode
-			flag:          "ipvs",
-			kmods:         []string{"foo", "bar", "baz"},
-			kernelVersion: "4.19",
-			ipsetVersion:  ipvs.MinIPSetCheckVersion,
-			kernelCompat:  true,
-			expected:      proxyModeIPTables,
-		},
-		{ // flag says ipvs, ipset version ok, kernel modules installed for sed scheduler
-			flag:          "ipvs",
-			kmods:         []string{"ip_vs", "ip_vs_rr", "ip_vs_wrr", "ip_vs_sh", "nf_conntrack", "ip_vs_sed"},
-			kernelVersion: "4.19",
-			ipsetVersion:  ipvs.MinIPSetCheckVersion,
-			expected:      proxyModeIPVS,
-			scheduler:     "sed",
-		},
-		{ // flag says ipvs, kernel modules not installed for sed scheduler, fallback to iptables
-			flag:          "ipvs",
-			kmods:         []string{"ip_vs", "ip_vs_rr", "ip_vs_wrr", "ip_vs_sh", "nf_conntrack"},
-			kernelVersion: "4.19",
-			ipsetVersion:  ipvs.MinIPSetCheckVersion,
-			expected:      proxyModeIPTables,
-			kernelCompat:  true,
-			scheduler:     "sed",
-		},
-	}
-	for i, c := range cases {
-		kcompater := &fakeKernelCompatTester{c.kernelCompat}
-		ipsetver := &fakeIPSetVersioner{c.ipsetVersion, c.ipsetError}
-		khandler := &fakeKernelHandler{
-			modules:       c.kmods,
-			kernelVersion: c.kernelVersion,
-		}
-		canUseIPVS, _ := ipvs.CanUseIPVSProxier(khandler, ipsetver, cases[i].scheduler)
-		r := getProxyMode(c.flag, canUseIPVS, kcompater)
-		if r != c.expected {
-			t.Errorf("Case[%d] Expected %q, got %q", i, c.expected, r)
-		}
-	}
-}
 
 func Test_getDetectLocalMode(t *testing.T) {
 	cases := []struct {
@@ -197,6 +58,16 @@ func Test_getDetectLocalMode(t *testing.T) {
 		{
 			detectLocal: string(proxyconfigapi.LocalModeClusterCIDR),
 			expected:    proxyconfigapi.LocalModeClusterCIDR,
+			errExpected: false,
+		},
+		{
+			detectLocal: string(proxyconfigapi.LocalModeInterfaceNamePrefix),
+			expected:    proxyconfigapi.LocalModeInterfaceNamePrefix,
+			errExpected: false,
+		},
+		{
+			detectLocal: string(proxyconfigapi.LocalModeBridgeInterface),
+			expected:    proxyconfigapi.LocalModeBridgeInterface,
 			errExpected: false,
 		},
 		{
@@ -453,6 +324,54 @@ func Test_getLocalDetector(t *testing.T) {
 			expected:    proxyutiliptables.NewNoOpLocalDetector(),
 			errExpected: false,
 		},
+		// LocalModeBridgeInterface, nodeInfo and ipt are not needed for these cases
+		{
+			mode: proxyconfigapi.LocalModeBridgeInterface,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{BridgeInterface: "eth"},
+			},
+			expected:    resolveLocalDetector(t)(proxyutiliptables.NewDetectLocalByBridgeInterface("eth")),
+			errExpected: false,
+		},
+		{
+			mode: proxyconfigapi.LocalModeBridgeInterface,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{BridgeInterface: ""},
+			},
+			errExpected: true,
+		},
+		{
+			mode: proxyconfigapi.LocalModeBridgeInterface,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{BridgeInterface: "1234567890123456789"},
+			},
+			expected:    resolveLocalDetector(t)(proxyutiliptables.NewDetectLocalByBridgeInterface("1234567890123456789")),
+			errExpected: false,
+		},
+		// LocalModeInterfaceNamePrefix, nodeInfo and ipt are not needed for these cases
+		{
+			mode: proxyconfigapi.LocalModeInterfaceNamePrefix,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{InterfaceNamePrefix: "eth"},
+			},
+			expected:    resolveLocalDetector(t)(proxyutiliptables.NewDetectLocalByInterfaceNamePrefix("eth")),
+			errExpected: false,
+		},
+		{
+			mode: proxyconfigapi.LocalModeInterfaceNamePrefix,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{InterfaceNamePrefix: ""},
+			},
+			errExpected: true,
+		},
+		{
+			mode: proxyconfigapi.LocalModeInterfaceNamePrefix,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{InterfaceNamePrefix: "1234567890123456789"},
+			},
+			expected:    resolveLocalDetector(t)(proxyutiliptables.NewDetectLocalByInterfaceNamePrefix("1234567890123456789")),
+			errExpected: false,
+		},
 	}
 	for i, c := range cases {
 		r, err := getLocalDetector(c.mode, c.config, c.ipt, c.nodeInfo)
@@ -590,6 +509,42 @@ func Test_getDualStackLocalDetectorTuple(t *testing.T) {
 			expected:    [2]proxyutiliptables.LocalTrafficDetector{proxyutiliptables.NewNoOpLocalDetector(), proxyutiliptables.NewNoOpLocalDetector()},
 			errExpected: false,
 		},
+		// LocalModeBridgeInterface, nodeInfo and ipt are not needed for these cases
+		{
+			mode: proxyconfigapi.LocalModeBridgeInterface,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{BridgeInterface: "eth"},
+			},
+			expected: resolveDualStackLocalDetectors(t)(
+				proxyutiliptables.NewDetectLocalByBridgeInterface("eth"))(
+				proxyutiliptables.NewDetectLocalByBridgeInterface("eth")),
+			errExpected: false,
+		},
+		{
+			mode: proxyconfigapi.LocalModeBridgeInterface,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{BridgeInterface: ""},
+			},
+			errExpected: true,
+		},
+		// LocalModeInterfaceNamePrefix, nodeInfo and ipt are not needed for these cases
+		{
+			mode: proxyconfigapi.LocalModeInterfaceNamePrefix,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{InterfaceNamePrefix: "veth"},
+			},
+			expected: resolveDualStackLocalDetectors(t)(
+				proxyutiliptables.NewDetectLocalByInterfaceNamePrefix("veth"))(
+				proxyutiliptables.NewDetectLocalByInterfaceNamePrefix("veth")),
+			errExpected: false,
+		},
+		{
+			mode: proxyconfigapi.LocalModeInterfaceNamePrefix,
+			config: &proxyconfigapi.KubeProxyConfiguration{
+				DetectLocal: proxyconfigapi.DetectLocalConfiguration{InterfaceNamePrefix: ""},
+			},
+			errExpected: true,
+		},
 	}
 	for i, c := range cases {
 		r, err := getDualStackLocalDetectorTuple(c.mode, c.config, c.ipt, c.nodeInfo)
@@ -673,6 +628,122 @@ func resolveDualStackLocalDetectors(t *testing.T) func(localDetector proxyutilip
 			}
 			return [2]proxyutiliptables.LocalTrafficDetector{localDetector, otherLocalDetector}
 		}
+	}
+}
+
+func TestConfigChange(t *testing.T) {
+	setUp := func() (*os.File, string, error) {
+		tempDir, err := os.MkdirTemp("", "kubeproxy-config-change")
+		if err != nil {
+			return nil, "", fmt.Errorf("unable to create temporary directory: %v", err)
+		}
+		fullPath := filepath.Join(tempDir, "kube-proxy-config")
+		file, err := os.Create(fullPath)
+		if err != nil {
+			return nil, "", fmt.Errorf("unexpected error when creating temp file: %v", err)
+		}
+
+		_, err = file.WriteString(`apiVersion: kubeproxy.config.k8s.io/v1alpha1
+bindAddress: 0.0.0.0
+bindAddressHardFail: false
+clientConnection:
+  acceptContentTypes: ""
+  burst: 10
+  contentType: application/vnd.kubernetes.protobuf
+  kubeconfig: /var/lib/kube-proxy/kubeconfig.conf
+  qps: 5
+clusterCIDR: 10.244.0.0/16
+configSyncPeriod: 15m0s
+conntrack:
+  maxPerCore: 32768
+  min: 131072
+  tcpCloseWaitTimeout: 1h0m0s
+  tcpEstablishedTimeout: 24h0m0s
+enableProfiling: false
+healthzBindAddress: 0.0.0.0:10256
+hostnameOverride: ""
+iptables:
+  masqueradeAll: false
+  masqueradeBit: 14
+  minSyncPeriod: 0s
+  syncPeriod: 30s
+ipvs:
+  excludeCIDRs: null
+  minSyncPeriod: 0s
+  scheduler: ""
+  syncPeriod: 30s
+kind: KubeProxyConfiguration
+metricsBindAddress: 127.0.0.1:10249
+mode: ""
+nodePortAddresses: null
+oomScoreAdj: -999
+portRange: ""
+detectLocalMode: "BridgeInterface"`)
+		if err != nil {
+			return nil, "", fmt.Errorf("unexpected error when writing content to temp kube-proxy config file: %v", err)
+		}
+
+		return file, tempDir, nil
+	}
+
+	tearDown := func(file *os.File, tempDir string) {
+		file.Close()
+		os.RemoveAll(tempDir)
+	}
+
+	testCases := []struct {
+		name        string
+		proxyServer proxyRun
+		append      bool
+		expectedErr string
+	}{
+		{
+			name:        "update config file",
+			proxyServer: new(fakeProxyServerLongRun),
+			append:      true,
+			expectedErr: "content of the proxy server's configuration file was updated",
+		},
+		{
+			name:        "fake error",
+			proxyServer: new(fakeProxyServerError),
+			expectedErr: "mocking error from ProxyServer.Run()",
+		},
+	}
+
+	for _, tc := range testCases {
+		file, tempDir, err := setUp()
+		if err != nil {
+			t.Fatalf("unexpected error when setting up environment: %v", err)
+		}
+
+		opt := NewOptions()
+		opt.ConfigFile = file.Name()
+		err = opt.Complete()
+		if err != nil {
+			t.Fatal(err)
+		}
+		opt.proxyServer = tc.proxyServer
+
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- opt.runLoop()
+		}()
+
+		if tc.append {
+			file.WriteString("append fake content")
+		}
+
+		select {
+		case err := <-errCh:
+			if err != nil {
+				if !strings.Contains(err.Error(), tc.expectedErr) {
+					t.Errorf("[%s] Expected error containing %v, got %v", tc.name, tc.expectedErr, err)
+				}
+			}
+		case <-time.After(10 * time.Second):
+			t.Errorf("[%s] Timeout: unable to get any events or internal timeout.", tc.name)
+		}
+		tearDown(file, tempDir)
 	}
 }
 

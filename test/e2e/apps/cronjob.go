@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -43,6 +43,7 @@ import (
 	e2ejob "k8s.io/kubernetes/test/e2e/framework/job"
 	e2eresource "k8s.io/kubernetes/test/e2e/framework/resource"
 	imageutils "k8s.io/kubernetes/test/utils/image"
+	admissionapi "k8s.io/pod-security-admission/api"
 )
 
 const (
@@ -52,6 +53,7 @@ const (
 
 var _ = SIGDescribe("CronJob", func() {
 	f := framework.NewDefaultFramework("cronjob")
+	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelBaseline
 
 	sleepCommand := []string{"sleep", "300"}
 
@@ -116,7 +118,7 @@ var _ = SIGDescribe("CronJob", func() {
 
 	/*
 	   Release: v1.21
-	   Testname: CronJob FrobidConcurrent
+	   Testname: CronJob ForbidConcurrent
 	   Description: CronJob MUST support ForbidConcurrent policy, allowing to run single, previous job at the time.
 	*/
 	framework.ConformanceIt("should not schedule new jobs when ForbidConcurrent [Slow]", func() {
@@ -191,7 +193,7 @@ var _ = SIGDescribe("CronJob", func() {
 		cronJob := newTestCronJob("concurrent", "*/1 * * * ?", batchv1.ForbidConcurrent,
 			sleepCommand, nil, nil)
 		creationTime := time.Now().Add(-99 * 24 * time.Hour)
-		lastScheduleTime := creationTime.Add(-1 * 24 * time.Hour)
+		lastScheduleTime := creationTime.Add(1 * 24 * time.Hour)
 		cronJob.CreationTimestamp = metav1.Time{Time: creationTime}
 		cronJob.Status.LastScheduleTime = &metav1.Time{Time: lastScheduleTime}
 		cronJob, err := createCronJob(f.ClientSet, f.Namespace.Name, cronJob)
@@ -294,6 +296,17 @@ var _ = SIGDescribe("CronJob", func() {
 			failureCommand, &successLimit, &failedLimit)
 
 		ensureHistoryLimits(f.ClientSet, f.Namespace.Name, cronJob)
+	})
+
+	ginkgo.It("should support timezone", func() {
+		ginkgo.By("Creating a cronjob with TimeZone")
+		cronJob := newTestCronJob("cronjob-with-timezone", "*/1 * * * ?", batchv1.AllowConcurrent,
+			failureCommand, nil, nil)
+		badTimeZone := "bad-time-zone"
+		cronJob.Spec.TimeZone = &badTimeZone
+		_, err := createCronJob(f.ClientSet, f.Namespace.Name, cronJob)
+		framework.ExpectError(err, "CronJob creation should fail with invalid time zone error")
+		framework.ExpectEqual(apierrors.IsInvalid(err), true, "CronJob creation should fail with invalid time zone error")
 	})
 
 	/*

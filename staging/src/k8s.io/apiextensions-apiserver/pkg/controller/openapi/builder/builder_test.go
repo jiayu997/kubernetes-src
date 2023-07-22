@@ -18,6 +18,7 @@ package builder
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,8 +31,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/endpoints"
-	"k8s.io/apiserver/pkg/features"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 	utilpointer "k8s.io/utils/pointer"
 )
@@ -539,10 +538,7 @@ func TestCRDRouteParameterBuilder(t *testing.T) {
 							actions.Insert(action)
 						}
 						if action == "patch" {
-							expected := []string{"application/json-patch+json", "application/merge-patch+json"}
-							if utilfeature.DefaultFeatureGate.Enabled(features.ServerSideApply) {
-								expected = append(expected, "application/apply-patch+yaml")
-							}
+							expected := []string{"application/json-patch+json", "application/merge-patch+json", "application/apply-patch+yaml"}
 							assert.Equal(t, operation.Consumes, expected)
 						} else {
 							assert.Equal(t, operation.Consumes, []string{"application/json", "application/yaml"})
@@ -719,21 +715,21 @@ func TestBuildOpenAPIV3(t *testing.T) {
 			"with properties",
 			`{"type":"object","properties":{"spec":{"type":"object"},"status":{"type":"object"}}}`,
 			nil,
-			`{"type":"object","properties":{"apiVersion":{"type":"string"},"kind":{"type":"string"},"metadata":{"$ref":"#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta"},"spec":{"type":"object"},"status":{"type":"object"}},"x-kubernetes-group-version-kind":[{"group":"bar.k8s.io","kind":"Foo","version":"v1"}]}`,
+			`{"type":"object","properties":{"apiVersion":{"type":"string"},"kind":{"type":"string"},"metadata":{"allOf":[{"$ref":"#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta"}]},"spec":{"type":"object"},"status":{"type":"object"}},"x-kubernetes-group-version-kind":[{"group":"bar.k8s.io","kind":"Foo","version":"v1"}]}`,
 			Options{},
 		},
 		{
 			"with v3 nullable field",
 			`{"type":"object","properties":{"spec":{"type":"object", "nullable": true},"status":{"type":"object"}}}`,
 			nil,
-			`{"type":"object","properties":{"apiVersion":{"type":"string"},"kind":{"type":"string"},"metadata":{"$ref":"#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta"},"spec":{"type":"object", "nullable": true},"status":{"type":"object"}},"x-kubernetes-group-version-kind":[{"group":"bar.k8s.io","kind":"Foo","version":"v1"}]}`,
+			`{"type":"object","properties":{"apiVersion":{"type":"string"},"kind":{"type":"string"},"metadata":{"allOf":[{"$ref":"#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta"}]},"spec":{"type":"object", "nullable": true},"status":{"type":"object"}},"x-kubernetes-group-version-kind":[{"group":"bar.k8s.io","kind":"Foo","version":"v1"}]}`,
 			Options{},
 		},
 		{
 			"with default not pruned for v3",
 			`{"type":"object","properties":{"spec":{"type":"object","properties":{"field":{"type":"string","default":"foo"}}},"status":{"type":"object"}}}`,
 			nil,
-			`{"type":"object","properties":{"apiVersion":{"type":"string"},"kind":{"type":"string"},"metadata":{"$ref":"#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta"},"spec":{"type":"object","properties":{"field":{"type":"string","default":"foo"}}},"status":{"type":"object"}},"x-kubernetes-group-version-kind":[{"group":"bar.k8s.io","kind":"Foo","version":"v1"}]}`,
+			`{"type":"object","properties":{"apiVersion":{"type":"string"},"kind":{"type":"string"},"metadata":{"allOf":[{"$ref":"#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta"}]},"spec":{"type":"object","properties":{"field":{"type":"string","default":"foo"}}},"status":{"type":"object"}},"x-kubernetes-group-version-kind":[{"group":"bar.k8s.io","kind":"Foo","version":"v1"}]}`,
 			Options{},
 		},
 	}
@@ -781,6 +777,10 @@ func TestBuildOpenAPIV3(t *testing.T) {
 			}
 
 			gotSchema := *got.Components.Schemas["io.k8s.bar.v1.Foo"]
+			listSchemaRef := got.Components.Schemas["io.k8s.bar.v1.FooList"].Properties["items"].Items.Schema.Ref.String()
+			if strings.Contains(listSchemaRef, "#/definitions/") || !strings.Contains(listSchemaRef, "#/components/schemas/") {
+				t.Errorf("Expected list schema ref to contain #/components/schemas/ prefix. Got %s", listSchemaRef)
+			}
 			gotProperties := properties(gotSchema.Properties)
 			wantedProperties := properties(wantedSchema.Properties)
 			if !gotProperties.Equal(wantedProperties) {
@@ -800,5 +800,32 @@ func TestBuildOpenAPIV3(t *testing.T) {
 				t.Errorf("unexpected schema: %s\nwant = %#v\ngot = %#v", schemaDiff(&wantedSchema, &gotSchema), &wantedSchema, &gotSchema)
 			}
 		})
+	}
+}
+
+// Tests that getDefinition's ref building function respects the v2 flag for v2
+// vs v3 operations
+// This bug did not surface since we only so far look up types which do not make
+// use of refs
+func TestGetDefinitionRefPrefix(t *testing.T) {
+	// A bug was triggered by generating the cached definition map for one version,
+	// but then performing a looking on another. The map is generated upon
+	// the first call to getDefinition
+
+	// ManagedFieldsEntry's Time field is known to use arefs
+	managedFieldsTypePath := "k8s.io/apimachinery/pkg/apis/meta/v1.ManagedFieldsEntry"
+
+	v2Ref := getDefinition(managedFieldsTypePath, true).SchemaProps.Properties["time"].SchemaProps.Ref
+	v3Ref := getDefinition(managedFieldsTypePath, false).SchemaProps.Properties["time"].SchemaProps.Ref
+
+	v2String := v2Ref.String()
+	v3String := v3Ref.String()
+
+	if !strings.HasPrefix(v3String, v3DefinitionPrefix) {
+		t.Errorf("v3 ref (%v) does not have the correct prefix (%v)", v3String, v3DefinitionPrefix)
+	}
+
+	if !strings.HasPrefix(v2String, definitionPrefix) {
+		t.Errorf("v2 ref (%v) does not have the correct prefix (%v)", v2String, definitionPrefix)
 	}
 }

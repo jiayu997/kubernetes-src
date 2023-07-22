@@ -21,11 +21,14 @@ package nodeshutdown
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,11 +36,16 @@ import (
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/tools/record"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
+	"k8s.io/klog/v2/ktesting"
+	_ "k8s.io/klog/v2/ktesting/init" // activate ktesting command line flags
 	"k8s.io/kubernetes/pkg/apis/scheduling"
 	pkgfeatures "k8s.io/kubernetes/pkg/features"
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
+	"k8s.io/kubernetes/pkg/kubelet/eviction"
 	"k8s.io/kubernetes/pkg/kubelet/nodeshutdown/systemd"
+	"k8s.io/kubernetes/pkg/kubelet/prober"
 	probetest "k8s.io/kubernetes/pkg/kubelet/prober/testing"
+	"k8s.io/utils/clock"
 	testingclock "k8s.io/utils/clock/testing"
 )
 
@@ -117,10 +125,86 @@ func TestManager(t *testing.T) {
 		shutdownGracePeriodCriticalPods  time.Duration
 		systemInhibitDelay               time.Duration
 		overrideSystemInhibitDelay       time.Duration
+		enablePodDisruptionConditions    bool
 		expectedDidOverrideInhibitDelay  bool
 		expectedPodToGracePeriodOverride map[string]int64
 		expectedError                    error
+		expectedPodStatuses              map[string]v1.PodStatus
 	}{
+		{
+			desc: "verify pod status; PodDisruptionConditions enabled",
+			activePods: []*v1.Pod{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "running-pod"},
+					Spec:       v1.PodSpec{},
+					Status: v1.PodStatus{
+						Phase: v1.PodRunning,
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "failed-pod"},
+					Spec:       v1.PodSpec{},
+					Status: v1.PodStatus{
+						Phase: v1.PodFailed,
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "succeeded-pod"},
+					Spec:       v1.PodSpec{},
+					Status: v1.PodStatus{
+						Phase: v1.PodSucceeded,
+					},
+				},
+			},
+			shutdownGracePeriodRequested:     time.Duration(30 * time.Second),
+			shutdownGracePeriodCriticalPods:  time.Duration(10 * time.Second),
+			systemInhibitDelay:               time.Duration(40 * time.Second),
+			overrideSystemInhibitDelay:       time.Duration(40 * time.Second),
+			enablePodDisruptionConditions:    true,
+			expectedDidOverrideInhibitDelay:  false,
+			expectedPodToGracePeriodOverride: map[string]int64{"running-pod": 20, "failed-pod": 20, "succeeded-pod": 20},
+			expectedPodStatuses: map[string]v1.PodStatus{
+				"running-pod": {
+					Phase:   v1.PodFailed,
+					Message: "Pod was terminated in response to imminent node shutdown.",
+					Reason:  "Terminated",
+					Conditions: []v1.PodCondition{
+						{
+							Type:    v1.DisruptionTarget,
+							Status:  v1.ConditionTrue,
+							Reason:  "TerminationByKubelet",
+							Message: "Pod was terminated in response to imminent node shutdown.",
+						},
+					},
+				},
+				"failed-pod": {
+					Phase:   v1.PodFailed,
+					Message: "Pod was terminated in response to imminent node shutdown.",
+					Reason:  "Terminated",
+					Conditions: []v1.PodCondition{
+						{
+							Type:    v1.DisruptionTarget,
+							Status:  v1.ConditionTrue,
+							Reason:  "TerminationByKubelet",
+							Message: "Pod was terminated in response to imminent node shutdown.",
+						},
+					},
+				},
+				"succeeded-pod": {
+					Phase:   v1.PodSucceeded,
+					Message: "Pod was terminated in response to imminent node shutdown.",
+					Reason:  "Terminated",
+					Conditions: []v1.PodCondition{
+						{
+							Type:    v1.DisruptionTarget,
+							Status:  v1.ConditionTrue,
+							Reason:  "TerminationByKubelet",
+							Message: "Pod was terminated in response to imminent node shutdown.",
+						},
+					},
+				},
+			},
+		},
 		{
 			desc:                             "no override (total=30s, critical=10s)",
 			activePods:                       []*v1.Pod{normalPodNoGracePeriod, criticalPodNoGracePeriod},
@@ -128,8 +212,21 @@ func TestManager(t *testing.T) {
 			shutdownGracePeriodCriticalPods:  time.Duration(10 * time.Second),
 			systemInhibitDelay:               time.Duration(40 * time.Second),
 			overrideSystemInhibitDelay:       time.Duration(40 * time.Second),
+			enablePodDisruptionConditions:    false,
 			expectedDidOverrideInhibitDelay:  false,
 			expectedPodToGracePeriodOverride: map[string]int64{"normal-pod-nil-grace-period": 20, "critical-pod-nil-grace-period": 10},
+			expectedPodStatuses: map[string]v1.PodStatus{
+				"normal-pod-nil-grace-period": {
+					Phase:   v1.PodFailed,
+					Message: "Pod was terminated in response to imminent node shutdown.",
+					Reason:  "Terminated",
+				},
+				"critical-pod-nil-grace-period": {
+					Phase:   v1.PodFailed,
+					Message: "Pod was terminated in response to imminent node shutdown.",
+					Reason:  "Terminated",
+				},
+			},
 		},
 		{
 			desc:                             "no override (total=30s, critical=10s) pods with terminationGracePeriod and without",
@@ -205,6 +302,8 @@ func TestManager(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.desc, func(t *testing.T) {
+			logger, _ := ktesting.NewTestContext(t)
+
 			activePodsFunc := func() []*v1.Pod {
 				return tc.activePods
 			}
@@ -220,6 +319,7 @@ func TestManager(t *testing.T) {
 				if gracePeriodOverride != nil {
 					gracePeriod = *gracePeriodOverride
 				}
+				fn(&pod.Status)
 				podKillChan <- PodKillInfo{Name: pod.Name, GracePeriod: gracePeriod}
 				return nil
 			}
@@ -231,12 +331,14 @@ func TestManager(t *testing.T) {
 			systemDbus = func() (dbusInhibiter, error) {
 				return fakeDbus, nil
 			}
+			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, pkgfeatures.PodDisruptionConditions, tc.enablePodDisruptionConditions)()
 			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, pkgfeatures.GracefulNodeShutdown, true)()
 
 			proberManager := probetest.FakeManager{}
 			fakeRecorder := &record.FakeRecorder{}
 			nodeRef := &v1.ObjectReference{Kind: "Node", Name: "test", UID: types.UID("test"), Namespace: ""}
 			manager, _ := NewManager(&Config{
+				Logger:                          logger,
 				ProbeManager:                    proberManager,
 				Recorder:                        fakeRecorder,
 				NodeRef:                         nodeRef,
@@ -246,6 +348,7 @@ func TestManager(t *testing.T) {
 				ShutdownGracePeriodRequested:    tc.shutdownGracePeriodRequested,
 				ShutdownGracePeriodCriticalPods: tc.shutdownGracePeriodCriticalPods,
 				Clock:                           testingclock.NewFakeClock(time.Now()),
+				StateDirectory:                  os.TempDir(),
 			})
 
 			err := manager.Start()
@@ -286,6 +389,13 @@ func TestManager(t *testing.T) {
 				assert.Equal(t, manager.Admit(nil).Admit, false)
 				assert.Equal(t, tc.expectedPodToGracePeriodOverride, killedPodsToGracePeriods)
 				assert.Equal(t, tc.expectedDidOverrideInhibitDelay, fakeDbus.didOverrideInhibitDelay, "override system inhibit delay differs")
+				if tc.expectedPodStatuses != nil {
+					for _, pod := range tc.activePods {
+						if diff := cmp.Diff(tc.expectedPodStatuses[pod.Name], pod.Status, cmpopts.IgnoreFields(v1.PodCondition{}, "LastProbeTime", "LastTransitionTime")); diff != "" {
+							t.Errorf("Unexpected PodStatus: (-want,+got):\n%s", diff)
+						}
+					}
+				}
 			}
 		})
 	}
@@ -319,6 +429,7 @@ func TestFeatureEnabled(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.desc, func(t *testing.T) {
+			logger, _ := ktesting.NewTestContext(t)
 			activePodsFunc := func() []*v1.Pod {
 				return nil
 			}
@@ -332,6 +443,7 @@ func TestFeatureEnabled(t *testing.T) {
 			nodeRef := &v1.ObjectReference{Kind: "Node", Name: "test", UID: types.UID("test"), Namespace: ""}
 
 			manager, _ := NewManager(&Config{
+				Logger:                          logger,
 				ProbeManager:                    proberManager,
 				Recorder:                        fakeRecorder,
 				NodeRef:                         nodeRef,
@@ -340,14 +452,15 @@ func TestFeatureEnabled(t *testing.T) {
 				SyncNodeStatusFunc:              func() {},
 				ShutdownGracePeriodRequested:    tc.shutdownGracePeriodRequested,
 				ShutdownGracePeriodCriticalPods: 0,
+				StateDirectory:                  os.TempDir(),
 			})
-
 			assert.Equal(t, tc.expectEnabled, manager != managerStub{})
 		})
 	}
 }
 
 func TestRestart(t *testing.T) {
+	logger, _ := ktesting.NewTestContext(t)
 	systemDbusTmp := systemDbus
 	defer func() {
 		systemDbus = systemDbusTmp
@@ -386,6 +499,7 @@ func TestRestart(t *testing.T) {
 	fakeRecorder := &record.FakeRecorder{}
 	nodeRef := &v1.ObjectReference{Kind: "Node", Name: "test", UID: types.UID("test"), Namespace: ""}
 	manager, _ := NewManager(&Config{
+		Logger:                          logger,
 		ProbeManager:                    proberManager,
 		Recorder:                        fakeRecorder,
 		NodeRef:                         nodeRef,
@@ -394,6 +508,7 @@ func TestRestart(t *testing.T) {
 		SyncNodeStatusFunc:              syncNodeStatus,
 		ShutdownGracePeriodRequested:    shutdownGracePeriodRequested,
 		ShutdownGracePeriodCriticalPods: shutdownGracePeriodCriticalPods,
+		StateDirectory:                  os.TempDir(),
 	})
 
 	err := manager.Start()
@@ -604,6 +719,107 @@ func Test_groupByPriority(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := groupByPriority(tt.args.shutdownGracePeriodByPodPriority, tt.args.pods); !assert.Equal(t, tt.want, got) {
 				t.Errorf("groupByPriority() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func Test_managerImpl_processShutdownEvent(t *testing.T) {
+	var (
+		probeManager   = probetest.FakeManager{}
+		fakeRecorder   = &record.FakeRecorder{}
+		syncNodeStatus = func() {}
+		nodeRef        = &v1.ObjectReference{Kind: "Node", Name: "test", UID: types.UID("test"), Namespace: ""}
+		fakeclock      = testingclock.NewFakeClock(time.Now())
+	)
+
+	type fields struct {
+		recorder                         record.EventRecorder
+		nodeRef                          *v1.ObjectReference
+		probeManager                     prober.Manager
+		shutdownGracePeriodByPodPriority []kubeletconfig.ShutdownGracePeriodByPodPriority
+		getPods                          eviction.ActivePodsFunc
+		killPodFunc                      eviction.KillPodFunc
+		syncNodeStatus                   func()
+		dbusCon                          dbusInhibiter
+		inhibitLock                      systemd.InhibitLock
+		nodeShuttingDownNow              bool
+		clock                            clock.Clock
+	}
+	tests := []struct {
+		name                   string
+		fields                 fields
+		wantErr                bool
+		expectedOutputContains string
+	}{
+		{
+			name: "kill pod func take too long",
+			fields: fields{
+				recorder:     fakeRecorder,
+				nodeRef:      nodeRef,
+				probeManager: probeManager,
+				shutdownGracePeriodByPodPriority: []kubeletconfig.ShutdownGracePeriodByPodPriority{
+					{
+						Priority:                   1,
+						ShutdownGracePeriodSeconds: 10,
+					},
+					{
+						Priority:                   2,
+						ShutdownGracePeriodSeconds: 20,
+					},
+				},
+				getPods: func() []*v1.Pod {
+					return []*v1.Pod{
+						makePod("normal-pod", 1, nil),
+						makePod("critical-pod", 2, nil),
+					}
+				},
+				killPodFunc: func(pod *v1.Pod, isEvicted bool, gracePeriodOverride *int64, fn func(*v1.PodStatus)) error {
+					fakeclock.Step(60 * time.Second)
+					return nil
+				},
+				syncNodeStatus: syncNodeStatus,
+				clock:          fakeclock,
+				dbusCon:        &fakeDbus{},
+			},
+			wantErr:                false,
+			expectedOutputContains: "Shutdown manager pod killing time out",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger, _ := ktesting.NewTestContext(t)
+
+			m := &managerImpl{
+				logger:                           logger,
+				recorder:                         tt.fields.recorder,
+				nodeRef:                          tt.fields.nodeRef,
+				probeManager:                     tt.fields.probeManager,
+				shutdownGracePeriodByPodPriority: tt.fields.shutdownGracePeriodByPodPriority,
+				getPods:                          tt.fields.getPods,
+				killPodFunc:                      tt.fields.killPodFunc,
+				syncNodeStatus:                   tt.fields.syncNodeStatus,
+				dbusCon:                          tt.fields.dbusCon,
+				inhibitLock:                      tt.fields.inhibitLock,
+				nodeShuttingDownMutex:            sync.Mutex{},
+				nodeShuttingDownNow:              tt.fields.nodeShuttingDownNow,
+				clock:                            tt.fields.clock,
+			}
+			if err := m.processShutdownEvent(); (err != nil) != tt.wantErr {
+				t.Errorf("managerImpl.processShutdownEvent() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			underlier, ok := logger.GetSink().(ktesting.Underlier)
+			if !ok {
+				t.Fatalf("Should have had a ktesting LogSink, got %T", logger.GetSink())
+			}
+
+			log := underlier.GetBuffer().String()
+			if !strings.Contains(log, tt.expectedOutputContains) {
+				// Log will be shown on failure. To see it
+				// during a successful run use "go test -v".
+				t.Errorf("managerImpl.processShutdownEvent() should have logged %s, see actual output above.", tt.expectedOutputContains)
 			}
 		})
 	}

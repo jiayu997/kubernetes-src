@@ -60,7 +60,8 @@ func TestImageLocal(t *testing.T) {
 
 	streams, _, buf, _ := genericclioptions.NewTestIOStreams()
 	cmd := NewCmdImage(tf, streams)
-	cmd.SetOutput(buf)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
 	cmd.Flags().Set("output", outputFormat)
 	cmd.Flags().Set("local", "true")
 
@@ -172,7 +173,8 @@ func TestSetMultiResourcesImageLocal(t *testing.T) {
 
 	streams, _, buf, _ := genericclioptions.NewTestIOStreams()
 	cmd := NewCmdImage(tf, streams)
-	cmd.SetOutput(buf)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
 	cmd.Flags().Set("output", outputFormat)
 	cmd.Flags().Set("local", "true")
 
@@ -776,5 +778,20 @@ func TestSetImageRemoteWithSpecificContainers(t *testing.T) {
 			err = opts.Run()
 			assert.NoError(t, err)
 		})
+	}
+}
+
+func TestSetImageResolver(t *testing.T) {
+	f := func(in string) (string, error) {
+		return "custom", nil
+	}
+
+	ImageResolver = f
+
+	out, err := ImageResolver("my-image")
+	if err != nil {
+		t.Errorf("unexpected error from ImageResolver: %v", err)
+	} else if out != "custom" {
+		t.Errorf("expected: %s, found: %s", "custom", out)
 	}
 }

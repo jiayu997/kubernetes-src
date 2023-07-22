@@ -19,6 +19,8 @@ limitations under the License.
 // +k8s:deepcopy-gen=package
 // +k8s:conversion-gen=k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm
 
+// Package v1beta2 has been DEPRECATED by v1beta3
+//
 // Package v1beta2 defines the v1beta2 version of the kubeadm configuration file format.
 // This version improves on the v1beta1 format by fixing some minor issues and adding a few new fields.
 //
@@ -138,7 +140,7 @@ limitations under the License.
 // The KubeProxyConfiguration type should be used to change the configuration passed to kube-proxy instances deployed
 // in the cluster. If this object is not provided or provided only partially, kubeadm applies defaults.
 //
-// See https://kubernetes.io/docs/reference/command-line-tools-reference/kube-proxy/ or https://godoc.org/k8s.io/kube-proxy/config/v1alpha1#KubeProxyConfiguration
+// See https://kubernetes.io/docs/reference/command-line-tools-reference/kube-proxy/ or https://pkg.go.dev/k8s.io/kube-proxy/config/v1alpha1#KubeProxyConfiguration
 // for kube proxy official documentation.
 //
 //	apiVersion: kubelet.config.k8s.io/v1beta1
@@ -148,7 +150,7 @@ limitations under the License.
 // The KubeletConfiguration type should be used to change the configurations that will be passed to all kubelet instances
 // deployed in the cluster. If this object is not provided or provided only partially, kubeadm applies defaults.
 //
-// See https://kubernetes.io/docs/reference/command-line-tools-reference/kubelet/ or https://godoc.org/k8s.io/kubelet/config/v1beta1#KubeletConfiguration
+// See https://kubernetes.io/docs/reference/command-line-tools-reference/kubelet/ or https://pkg.go.dev/k8s.io/kubelet/config/v1beta1#KubeletConfiguration
 // for kubelet official documentation.
 //
 // Here is a fully populated example of a single YAML file containing multiple
@@ -169,10 +171,10 @@ limitations under the License.
 //	  - system:bootstrappers:kubeadm:default-node-token
 //	nodeRegistration:
 //	  name: "ec2-10-100-0-1"
-//	  criSocket: "/var/run/dockershim.sock"
+//	  criSocket: "unix:///var/run/containerd/containerd.sock"
 //	  taints:
 //	  - key: "kubeadmNode"
-//	    value: "master"
+//	    value: "someValue"
 //	    effect: "NoSchedule"
 //	  kubeletExtraArgs:
 //	    v: 4

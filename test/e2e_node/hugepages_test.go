@@ -25,7 +25,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
 	v1 "k8s.io/api/core/v1"
@@ -37,6 +37,7 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
+	admissionapi "k8s.io/pod-security-admission/api"
 )
 
 const (
@@ -118,7 +119,7 @@ func makePodToVerifyHugePages(baseName string, hugePagesLimit resource.Quantity,
 }
 
 // configureHugePages attempts to allocate hugepages of the specified size
-func configureHugePages(hugepagesSize int, hugepagesCount int) error {
+func configureHugePages(hugepagesSize int, hugepagesCount int, numaNodeID *int) error {
 	// Compact memory to make bigger contiguous blocks of memory available
 	// before allocating huge pages.
 	// https://www.kernel.org/doc/Documentation/sysctl/vm.txt
@@ -128,16 +129,26 @@ func configureHugePages(hugepagesSize int, hugepagesCount int) error {
 		}
 	}
 
+	// e.g. hugepages/hugepages-2048kB/nr_hugepages
+	hugepagesSuffix := fmt.Sprintf("hugepages/hugepages-%dkB/%s", hugepagesSize, hugepagesCapacityFile)
+
+	// e.g. /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
+	hugepagesFile := fmt.Sprintf("/sys/kernel/mm/%s", hugepagesSuffix)
+	if numaNodeID != nil {
+		// e.g. /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages
+		hugepagesFile = fmt.Sprintf("/sys/devices/system/node/node%d/%s", *numaNodeID, hugepagesSuffix)
+	}
+
 	// Reserve number of hugepages
-	// e.g. /bin/sh -c "echo 5 > /sys/kernel/mm/hugepages/hugepages-2048kB/vm.nr_hugepages"
-	command := fmt.Sprintf("echo %d > %s-%dkB/%s", hugepagesCount, hugepagesDirPrefix, hugepagesSize, hugepagesCapacityFile)
+	// e.g. /bin/sh -c "echo 5 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages"
+	command := fmt.Sprintf("echo %d > %s", hugepagesCount, hugepagesFile)
 	if err := exec.Command("/bin/sh", "-c", command).Run(); err != nil {
 		return err
 	}
 
 	// verify that the number of hugepages was updated
 	// e.g. /bin/sh -c "cat /sys/kernel/mm/hugepages/hugepages-2048kB/vm.nr_hugepages"
-	command = fmt.Sprintf("cat %s-%dkB/%s", hugepagesDirPrefix, hugepagesSize, hugepagesCapacityFile)
+	command = fmt.Sprintf("cat %s", hugepagesFile)
 	outData, err := exec.Command("/bin/sh", "-c", command).Output()
 	if err != nil {
 		return err
@@ -191,6 +202,7 @@ func getHugepagesTestPod(f *framework.Framework, limits v1.ResourceList, mounts 
 // Serial because the test updates kubelet configuration.
 var _ = SIGDescribe("HugePages [Serial] [Feature:HugePages][NodeSpecialFeature:HugePages]", func() {
 	f := framework.NewDefaultFramework("hugepages-test")
+	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
 
 	ginkgo.It("should remove resources for huge page sizes no longer supported", func() {
 		ginkgo.By("mimicking support for 9Mi of 3Mi huge page memory by patching the node status")
@@ -258,7 +270,7 @@ var _ = SIGDescribe("HugePages [Serial] [Feature:HugePages][NodeSpecialFeature:H
 
 				ginkgo.By(fmt.Sprintf("Configuring the host to reserve %d of pre-allocated hugepages of size %d", count, size))
 				gomega.Eventually(func() error {
-					if err := configureHugePages(size, count); err != nil {
+					if err := configureHugePages(size, count, nil); err != nil {
 						return err
 					}
 					return nil
@@ -311,7 +323,7 @@ var _ = SIGDescribe("HugePages [Serial] [Feature:HugePages][NodeSpecialFeature:H
 			ginkgo.It("should set correct hugetlb mount and limit under the container cgroup", func() {
 				ginkgo.By("getting mounts for the test pod")
 				command := []string{"mount"}
-				out := f.ExecCommandInContainer(testpod.Name, testpod.Spec.Containers[0].Name, command...)
+				out := e2epod.ExecCommandInContainer(f, testpod.Name, testpod.Spec.Containers[0].Name, command...)
 
 				for _, mount := range mounts {
 					ginkgo.By(fmt.Sprintf("checking that the hugetlb mount %s exists under the container", mount.MountPath))
@@ -325,7 +337,7 @@ var _ = SIGDescribe("HugePages [Serial] [Feature:HugePages][NodeSpecialFeature:H
 						resourceToCgroup[resourceName],
 					)
 					ginkgo.By("checking if the expected hugetlb settings were applied")
-					f.PodClient().Create(verifyPod)
+					e2epod.NewPodClient(f).Create(verifyPod)
 					err := e2epod.WaitForPodSuccessInNamespace(f.ClientSet, verifyPod.Name, f.Namespace.Name)
 					framework.ExpectNoError(err)
 				}
@@ -344,13 +356,13 @@ var _ = SIGDescribe("HugePages [Serial] [Feature:HugePages][NodeSpecialFeature:H
 			pod := getHugepagesTestPod(f, limits, mounts, volumes)
 
 			ginkgo.By("by running a test pod that requests hugepages")
-			testpod = f.PodClient().CreateSync(pod)
+			testpod = e2epod.NewPodClient(f).CreateSync(pod)
 		})
 
 		// we should use JustAfterEach because framework will teardown the client under the AfterEach method
 		ginkgo.JustAfterEach(func() {
 			ginkgo.By(fmt.Sprintf("deleting test pod %s", testpod.Name))
-			f.PodClient().DeleteSync(testpod.Name, metav1.DeleteOptions{}, 2*time.Minute)
+			e2epod.NewPodClient(f).DeleteSync(testpod.Name, metav1.DeleteOptions{}, 2*time.Minute)
 
 			releaseHugepages()
 

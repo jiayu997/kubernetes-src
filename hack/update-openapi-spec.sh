@@ -84,7 +84,6 @@ kube::log::status "Starting kube-apiserver"
   --service-account-lookup="${SERVICE_ACCOUNT_LOOKUP}" \
   --service-account-issuer="https://kubernetes.default.svc" \
   --service-account-signing-key-file="${SERVICE_ACCOUNT_KEY}" \
-  --logtostderr \
   --v=2 \
   --service-cluster-ip-range="10.0.0.0/24" >"${API_LOGFILE}" 2>&1 &
 APISERVER_PID=$!
@@ -104,7 +103,11 @@ curl -w "\n" -kfsS -H 'Authorization: Bearer dummy_token' "https://${API_HOST}:$
 kube::log::status "Updating " "${OPENAPI_ROOT_DIR}/v3 for OpenAPI v3"
 
 mkdir -p "${OPENAPI_ROOT_DIR}/v3"
-curl -w "\n" -kfsS -H 'Authorization: Bearer dummy_token' "https://${API_HOST}:${API_PORT}/openapi/v3" | jq '.Paths' | jq -r '.[]' | while read -r group; do
+# clean up folder, note that some files start with dot like
+# ".well-known__openid-configuration_openapi.json"
+rm -r "${OPENAPI_ROOT_DIR}"/v3/{*,.*} || true
+
+curl -w "\n" -kfsS -H 'Authorization: Bearer dummy_token' "https://${API_HOST}:${API_PORT}/openapi/v3" | jq -r '.paths | to_entries | .[].key' | while read -r group; do
     kube::log::status "Updating OpenAPI spec for group ${group}"
     OPENAPI_FILENAME="${group}_openapi.json"
     OPENAPI_FILENAME_ESCAPED="${OPENAPI_FILENAME//\//__}"

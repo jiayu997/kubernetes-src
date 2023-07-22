@@ -43,6 +43,10 @@ var (
 		The easiest way to discover and install plugins is via the kubernetes sub-project krew.
 		To install krew, visit [krew.sigs.k8s.io](https://krew.sigs.k8s.io/docs/user-guide/setup/install/)`))
 
+	pluginExample = templates.Examples(i18n.T(`
+		# List all available plugins
+		kubectl plugin list`))
+
 	pluginListLong = templates.LongDesc(i18n.T(`
 		List all available plugin files on a user's PATH.
 
@@ -86,9 +90,10 @@ func NewCmdPluginList(streams genericclioptions.IOStreams) *cobra.Command {
 	}
 
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: i18n.T("List all visible plugin executables on a user's PATH"),
-		Long:  pluginListLong,
+		Use:     "list",
+		Short:   i18n.T("List all visible plugin executables on a user's PATH"),
+		Example: pluginExample,
+		Long:    pluginListLong,
 		Run: func(cmd *cobra.Command, args []string) {
 			cmdutil.CheckErr(o.Complete(cmd))
 			cmdutil.CheckErr(o.Run())
@@ -110,58 +115,27 @@ func (o *PluginListOptions) Complete(cmd *cobra.Command) error {
 }
 
 func (o *PluginListOptions) Run() error {
-	pluginsFound := false
-	isFirstFile := true
-	pluginErrors := []error{}
-	pluginWarnings := 0
+	plugins, pluginErrors := o.ListPlugins()
 
-	for _, dir := range uniquePathsList(o.PluginPaths) {
-		if len(strings.TrimSpace(dir)) == 0 {
-			continue
-		}
-
-		files, err := ioutil.ReadDir(dir)
-		if err != nil {
-			if _, ok := err.(*os.PathError); ok {
-				fmt.Fprintf(o.ErrOut, "Unable to read directory %q from your PATH: %v. Skipping...\n", dir, err)
-				continue
-			}
-
-			pluginErrors = append(pluginErrors, fmt.Errorf("error: unable to read directory %q in your PATH: %v", dir, err))
-			continue
-		}
-
-		for _, f := range files {
-			if f.IsDir() {
-				continue
-			}
-			if !hasValidPrefix(f.Name(), ValidPluginFilenamePrefixes) {
-				continue
-			}
-
-			if isFirstFile {
-				fmt.Fprintf(o.Out, "The following compatible plugins are available:\n\n")
-				pluginsFound = true
-				isFirstFile = false
-			}
-
-			pluginPath := f.Name()
-			if !o.NameOnly {
-				pluginPath = filepath.Join(dir, pluginPath)
-			}
-
-			fmt.Fprintf(o.Out, "%s\n", pluginPath)
-			if errs := o.Verifier.Verify(filepath.Join(dir, f.Name())); len(errs) != 0 {
-				for _, err := range errs {
-					fmt.Fprintf(o.ErrOut, "  - %s\n", err)
-					pluginWarnings++
-				}
-			}
-		}
+	if len(plugins) > 0 {
+		fmt.Fprintf(o.Out, "The following compatible plugins are available:\n\n")
+	} else {
+		pluginErrors = append(pluginErrors, fmt.Errorf("error: unable to find any kubectl plugins in your PATH"))
 	}
 
-	if !pluginsFound {
-		pluginErrors = append(pluginErrors, fmt.Errorf("error: unable to find any kubectl plugins in your PATH"))
+	pluginWarnings := 0
+	for _, pluginPath := range plugins {
+		if o.NameOnly {
+			fmt.Fprintf(o.Out, "%s\n", filepath.Base(pluginPath))
+		} else {
+			fmt.Fprintf(o.Out, "%s\n", pluginPath)
+		}
+		if errs := o.Verifier.Verify(pluginPath); len(errs) != 0 {
+			for _, err := range errs {
+				fmt.Fprintf(o.ErrOut, "  - %s\n", err)
+				pluginWarnings++
+			}
+		}
 	}
 
 	if pluginWarnings > 0 {
@@ -180,6 +154,42 @@ func (o *PluginListOptions) Run() error {
 	}
 
 	return nil
+}
+
+// ListPlugins returns list of plugin paths.
+func (o *PluginListOptions) ListPlugins() ([]string, []error) {
+	plugins := []string{}
+	errors := []error{}
+
+	for _, dir := range uniquePathsList(o.PluginPaths) {
+		if len(strings.TrimSpace(dir)) == 0 {
+			continue
+		}
+
+		files, err := ioutil.ReadDir(dir)
+		if err != nil {
+			if _, ok := err.(*os.PathError); ok {
+				fmt.Fprintf(o.ErrOut, "Unable to read directory %q from your PATH: %v. Skipping...\n", dir, err)
+				continue
+			}
+
+			errors = append(errors, fmt.Errorf("error: unable to read directory %q in your PATH: %v", dir, err))
+			continue
+		}
+
+		for _, f := range files {
+			if f.IsDir() {
+				continue
+			}
+			if !hasValidPrefix(f.Name(), ValidPluginFilenamePrefixes) {
+				continue
+			}
+
+			plugins = append(plugins, filepath.Join(dir, f.Name()))
+		}
+	}
+
+	return plugins, errors
 }
 
 // pathVerifier receives a path and determines if it is valid or not

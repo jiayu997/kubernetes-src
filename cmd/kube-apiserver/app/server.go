@@ -30,14 +30,17 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
+
+	oteltrace "go.opentelemetry.io/otel/trace"
 
 	extensionsapiserver "k8s.io/apiextensions-apiserver/pkg/apiserver"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
+	"k8s.io/apiserver/pkg/endpoints/discovery/aggregated"
 	genericapifilters "k8s.io/apiserver/pkg/endpoints/filters"
 	openapinamer "k8s.io/apiserver/pkg/endpoints/openapi"
 	genericfeatures "k8s.io/apiserver/pkg/features"
@@ -58,6 +61,7 @@ import (
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/cli/globalflag"
 	"k8s.io/component-base/logs"
+	logsapi "k8s.io/component-base/logs/api/v1"
 	_ "k8s.io/component-base/metrics/prometheus/workqueue" // for workqueue metric registration
 	"k8s.io/component-base/term"
 	"k8s.io/component-base/version"
@@ -81,18 +85,8 @@ import (
 	"k8s.io/kubernetes/pkg/serviceaccount"
 )
 
-// TODO: delete this check after insecure flags removed in v1.24
-func checkNonZeroInsecurePort(fs *pflag.FlagSet) error {
-	for _, name := range options.InsecurePortFlags {
-		val, err := fs.GetInt(name)
-		if err != nil {
-			return err
-		}
-		if val != 0 {
-			return fmt.Errorf("invalid port value %d: only zero is allowed", val)
-		}
-	}
-	return nil
+func init() {
+	utilruntime.Must(logsapi.AddFeatureGates(utilfeature.DefaultMutableFeatureGate))
 }
 
 // NewAPIServerCommand creates a *cobra.Command object with default parameters
@@ -119,15 +113,11 @@ cluster's shared state through which all other components interact.`,
 
 			// Activate logging as soon as possible, after that
 			// show flags with the final logging configuration.
-			if err := s.Logs.ValidateAndApply(); err != nil {
+			if err := logsapi.ValidateAndApply(s.Logs, utilfeature.DefaultFeatureGate); err != nil {
 				return err
 			}
 			cliflag.PrintFlags(fs)
 
-			err := checkNonZeroInsecurePort(fs)
-			if err != nil {
-				return err
-			}
 			// set default options
 			completedOptions, err := Complete(s)
 			if err != nil {
@@ -138,7 +128,8 @@ cluster's shared state through which all other components interact.`,
 			if errs := completedOptions.Validate(); len(errs) != 0 {
 				return utilerrors.NewAggregate(errs)
 			}
-
+			// add feature enablement metrics
+			utilfeature.DefaultMutableFeatureGate.AddMetrics()
 			return Run(completedOptions, genericapiserver.SetupSignalHandler())
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -171,7 +162,9 @@ func Run(completeOptions completedServerRunOptions, stopCh <-chan struct{}) erro
 	// To help debugging, immediately log version
 	klog.Infof("Version: %+v", version.Get())
 
-	server, err := CreateServerChain(completeOptions, stopCh)
+	klog.InfoS("Golang settings", "GOGC", os.Getenv("GOGC"), "GOMAXPROCS", os.Getenv("GOMAXPROCS"), "GOTRACEBACK", os.Getenv("GOTRACEBACK"))
+
+	server, err := CreateServerChain(completeOptions)
 	if err != nil {
 		return err
 	}
@@ -185,7 +178,7 @@ func Run(completeOptions completedServerRunOptions, stopCh <-chan struct{}) erro
 }
 
 // CreateServerChain creates the apiservers connected via delegation.
-func CreateServerChain(completedOptions completedServerRunOptions, stopCh <-chan struct{}) (*aggregatorapiserver.APIAggregator, error) {
+func CreateServerChain(completedOptions completedServerRunOptions) (*aggregatorapiserver.APIAggregator, error) {
 	kubeAPIServerConfig, serviceResolver, pluginInitializer, err := CreateKubeAPIServerConfig(completedOptions)
 	if err != nil {
 		return nil, err
@@ -259,16 +252,7 @@ func CreateKubeAPIServerConfig(s completedServerRunOptions) (
 		return nil, nil, nil, err
 	}
 
-	capabilities.Initialize(capabilities.Capabilities{
-		AllowPrivileged: s.AllowPrivileged,
-		// TODO(vmarmol): Implement support for HostNetworkSources.
-		PrivilegedSources: capabilities.PrivilegedSources{
-			HostNetworkSources: []string{},
-			HostPIDSources:     []string{},
-			HostIPCSources:     []string{},
-		},
-		PerConnectionBandwidthLimitBytesPerSec: s.MaxConnectionBytesPerSec,
-	})
+	capabilities.Setup(s.AllowPrivileged, s.MaxConnectionBytesPerSec)
 
 	s.Metrics.Apply()
 	serviceaccount.RegisterMetrics()
@@ -300,9 +284,6 @@ func CreateKubeAPIServerConfig(s completedServerRunOptions) (
 			ExtendExpiration:            s.Authentication.ServiceAccounts.ExtendExpiration,
 
 			VersionedInformers: versionedInformers,
-
-			IdentityLeaseDurationSeconds:      s.IdentityLeaseDurationSeconds,
-			IdentityLeaseRenewIntervalSeconds: s.IdentityLeaseRenewIntervalSeconds,
 		},
 	}
 
@@ -401,6 +382,11 @@ func buildGenericConfig(
 	getOpenAPIDefinitions := openapi.GetOpenAPIDefinitionsWithoutDisabledFeatures(generatedopenapi.GetOpenAPIDefinitions)
 	genericConfig.OpenAPIConfig = genericapiserver.DefaultOpenAPIConfig(getOpenAPIDefinitions, openapinamer.NewDefinitionNamer(legacyscheme.Scheme, extensionsapiserver.Scheme, aggregatorscheme.Scheme))
 	genericConfig.OpenAPIConfig.Info.Title = "Kubernetes"
+	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.OpenAPIV3) {
+		genericConfig.OpenAPIV3Config = genericapiserver.DefaultOpenAPIV3Config(getOpenAPIDefinitions, openapinamer.NewDefinitionNamer(legacyscheme.Scheme, extensionsapiserver.Scheme, aggregatorscheme.Scheme))
+		genericConfig.OpenAPIV3Config.Info.Title = "Kubernetes"
+	}
+
 	genericConfig.LongRunningFunc = filters.BasicLongRunningRequestCheck(
 		sets.NewString("watch", "proxy"),
 		sets.NewString("attach", "exec", "proxy", "log", "portforward"),
@@ -409,22 +395,23 @@ func buildGenericConfig(
 	kubeVersion := version.Get()
 	genericConfig.Version = &kubeVersion
 
+	if genericConfig.EgressSelector != nil {
+		s.Etcd.StorageConfig.Transport.EgressLookup = genericConfig.EgressSelector.Lookup
+	}
+	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerTracing) {
+		s.Etcd.StorageConfig.Transport.TracerProvider = genericConfig.TracerProvider
+	} else {
+		s.Etcd.StorageConfig.Transport.TracerProvider = oteltrace.NewNoopTracerProvider()
+	}
+	if lastErr = s.Etcd.Complete(genericConfig.StorageObjectCountTracker, genericConfig.DrainedNotify(), genericConfig.AddPostStartHook); lastErr != nil {
+		return
+	}
+
 	storageFactoryConfig := kubeapiserver.NewStorageFactoryConfig()
 	storageFactoryConfig.APIResourceConfig = genericConfig.MergedResourceConfig
-	completedStorageFactoryConfig, err := storageFactoryConfig.Complete(s.Etcd)
-	if err != nil {
-		lastErr = err
-		return
-	}
-	storageFactory, lastErr = completedStorageFactoryConfig.New()
+	storageFactory, lastErr = storageFactoryConfig.Complete(s.Etcd).New()
 	if lastErr != nil {
 		return
-	}
-	if genericConfig.EgressSelector != nil {
-		storageFactory.StorageConfig.Transport.EgressLookup = genericConfig.EgressSelector.Lookup
-	}
-	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerTracing) && genericConfig.TracerProvider != nil {
-		storageFactory.StorageConfig.Transport.TracerProvider = genericConfig.TracerProvider
 	}
 	if lastErr = s.Etcd.ApplyWithStorageFactoryTo(storageFactory, genericConfig); lastErr != nil {
 		return
@@ -448,7 +435,7 @@ func buildGenericConfig(
 	versionedInformers = clientgoinformers.NewSharedInformerFactory(clientgoExternalClient, 10*time.Minute)
 
 	// Authentication.ApplyTo requires already applied OpenAPIConfig and EgressSelector if present
-	if lastErr = s.Authentication.ApplyTo(&genericConfig.Authentication, genericConfig.SecureServing, genericConfig.EgressSelector, genericConfig.OpenAPIConfig, clientgoExternalClient, versionedInformers); lastErr != nil {
+	if lastErr = s.Authentication.ApplyTo(&genericConfig.Authentication, genericConfig.SecureServing, genericConfig.EgressSelector, genericConfig.OpenAPIConfig, genericConfig.OpenAPIV3Config, clientgoExternalClient, versionedInformers); lastErr != nil {
 		return
 	}
 
@@ -492,6 +479,9 @@ func buildGenericConfig(
 	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIPriorityAndFairness) && s.GenericServerRunOptions.EnablePriorityAndFairness {
 		genericConfig.FlowControl, lastErr = BuildPriorityAndFairness(s, clientgoExternalClient, versionedInformers)
 	}
+	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.AggregatedDiscoveryEndpoint) {
+		genericConfig.AggregatedDiscoveryGroupManager = aggregated.NewResourceManager()
+	}
 
 	return
 }
@@ -518,7 +508,7 @@ func BuildPriorityAndFairness(s *options.ServerRunOptions, extclient clientgocli
 	}
 	return utilflowcontrol.New(
 		versionedInformer,
-		extclient.FlowcontrolV1beta2(),
+		extclient.FlowcontrolV1beta3(),
 		s.GenericServerRunOptions.MaxRequestsInFlight+s.GenericServerRunOptions.MaxMutatingRequestsInFlight,
 		s.GenericServerRunOptions.RequestTimeout/4,
 	), nil
@@ -643,7 +633,27 @@ func Complete(s *options.ServerRunOptions) (completedServerRunOptions, error) {
 	return options, nil
 }
 
+var testServiceResolver webhook.ServiceResolver
+
+// SetServiceResolverForTests allows the service resolver to be overridden during tests.
+// Tests using this function must run serially as this function is not safe to call concurrently with server start.
+func SetServiceResolverForTests(resolver webhook.ServiceResolver) func() {
+	if testServiceResolver != nil {
+		panic("test service resolver is set: tests are either running concurrently or clean up was skipped")
+	}
+
+	testServiceResolver = resolver
+
+	return func() {
+		testServiceResolver = nil
+	}
+}
+
 func buildServiceResolver(enabledAggregatorRouting bool, hostname string, informer clientgoinformers.SharedInformerFactory) webhook.ServiceResolver {
+	if testServiceResolver != nil {
+		return testServiceResolver
+	}
+
 	var serviceResolver webhook.ServiceResolver
 	if enabledAggregatorRouting {
 		serviceResolver = aggregatorapiserver.NewEndpointServiceResolver(

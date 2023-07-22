@@ -19,7 +19,7 @@ package netpol
 import (
 	"fmt"
 
-	"github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/v2"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/kubernetes/test/e2e/framework"
 	netutils "k8s.io/utils/net"
@@ -27,13 +27,14 @@ import (
 
 // decouple us from k8smanager.go
 type Prober interface {
-	probeConnectivity(nsFrom string, podFrom string, containerFrom string, addrTo string, protocol v1.Protocol, toPort int, timeoutSeconds int) (bool, string, error)
+	probeConnectivity(args *probeConnectivityArgs) (bool, string, error)
 }
 
 // ProbeJob packages the data for the input of a pod->pod connectivity probe
 type ProbeJob struct {
-	PodFrom        *Pod
-	PodTo          *Pod
+	PodFrom        TestPod
+	PodTo          TestPod
+	PodToServiceIP string
 	ToPort         int
 	ToPodDNSDomain string
 	Protocol       v1.Protocol
@@ -48,13 +49,12 @@ type ProbeJobResults struct {
 }
 
 // ProbePodToPodConnectivity runs a series of probes in kube, and records the results in `testCase.Reachability`
-func ProbePodToPodConnectivity(prober Prober, model *Model, testCase *TestCase) {
-	allPods := model.AllPods()
+func ProbePodToPodConnectivity(prober Prober, allPods []TestPod, dnsDomain string, testCase *TestCase) {
 	size := len(allPods) * len(allPods)
 	jobs := make(chan *ProbeJob, size)
 	results := make(chan *ProbeJobResults, size)
-	for i := 0; i < model.GetWorkers(); i++ {
-		go probeWorker(prober, jobs, results, model.GetProbeTimeoutSeconds())
+	for i := 0; i < getWorkers(); i++ {
+		go probeWorker(prober, jobs, results, getProbeTimeoutSeconds())
 	}
 	for _, podFrom := range allPods {
 		for _, podTo := range allPods {
@@ -62,7 +62,7 @@ func ProbePodToPodConnectivity(prober Prober, model *Model, testCase *TestCase) 
 				PodFrom:        podFrom,
 				PodTo:          podTo,
 				ToPort:         testCase.ToPort,
-				ToPodDNSDomain: model.DNSDomain,
+				ToPodDNSDomain: dnsDomain,
 				Protocol:       testCase.Protocol,
 			}
 		}
@@ -95,6 +95,7 @@ func probeWorker(prober Prober, jobs <-chan *ProbeJob, results chan<- *ProbeJobR
 	defer ginkgo.GinkgoRecover()
 	for job := range jobs {
 		podFrom := job.PodFrom
+		// defensive programming: this should not be possible as we already check in initializeClusterFromModel
 		if netutils.ParseIPSloppy(job.PodTo.ServiceIP) == nil {
 			results <- &ProbeJobResults{
 				Job:         job,
@@ -108,7 +109,15 @@ func probeWorker(prober Prober, jobs <-chan *ProbeJob, results chan<- *ProbeJobR
 		// dnsName := job.PodTo.QualifiedServiceAddress(job.ToPodDNSDomain)
 
 		// TODO make this work on dual-stack clusters...
-		connected, command, err := prober.probeConnectivity(podFrom.Namespace, podFrom.Name, podFrom.Containers[0].Name(), job.PodTo.ServiceIP, job.Protocol, job.ToPort, timeoutSeconds)
+		connected, command, err := prober.probeConnectivity(&probeConnectivityArgs{
+			nsFrom:         podFrom.Namespace,
+			podFrom:        podFrom.Name,
+			containerFrom:  podFrom.ContainerName,
+			addrTo:         job.PodTo.ServiceIP,
+			protocol:       job.Protocol,
+			toPort:         job.ToPort,
+			timeoutSeconds: timeoutSeconds,
+		})
 		result := &ProbeJobResults{
 			Job:         job,
 			IsConnected: connected,

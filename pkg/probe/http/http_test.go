@@ -84,7 +84,13 @@ func TestHTTPProbeProxy(t *testing.T) {
 	if err != nil {
 		t.Errorf("proxy test unexpected error: %v", err)
 	}
-	_, response, _ := prober.Probe(url, http.Header{}, time.Second*3)
+
+	req, err := NewProbeRequest(url, http.Header{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, response, _ := prober.Probe(req, time.Second*3)
 
 	if response == res {
 		t.Errorf("proxy test unexpected error: the probe is using proxy")
@@ -135,6 +141,17 @@ func TestHTTPProbeChecker(t *testing.T) {
 				http.Redirect(w, r, "/new", s)
 			} else if bad && r.URL.Path == "/new" {
 				http.Error(w, "", http.StatusInternalServerError)
+			}
+		}
+	}
+
+	redirectHandlerWithBody := func(s int, body string) func(w http.ResponseWriter, r *http.Request) {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/" {
+				http.Redirect(w, r, "/new", s)
+			} else if r.URL.Path == "/new" {
+				w.WriteHeader(s)
+				w.Write([]byte(body))
 			}
 		}
 	}
@@ -336,6 +353,16 @@ func TestHTTPProbeChecker(t *testing.T) {
 			handler: redirectHandler(http.StatusPermanentRedirect, true), // 308
 			health:  probe.Failure,
 		},
+		{
+			handler: redirectHandlerWithBody(http.StatusPermanentRedirect, ""), // redirect with empty body
+			health:  probe.Warning,
+			accBody: "Probe terminated redirects, Response body:",
+		},
+		{
+			handler: redirectHandlerWithBody(http.StatusPermanentRedirect, "ok body"), // redirect with body
+			health:  probe.Warning,
+			accBody: "Probe terminated redirects, Response body: ok body",
+		},
 	}
 	for i, test := range testCases {
 		t.Run(fmt.Sprintf("case-%2d", i), func(t *testing.T) {
@@ -355,7 +382,11 @@ func TestHTTPProbeChecker(t *testing.T) {
 			if err != nil {
 				t.Errorf("case %d: unexpected error: %v", i, err)
 			}
-			health, output, err := prober.Probe(u, test.reqHeaders, 1*time.Second)
+			req, err := NewProbeRequest(u, test.reqHeaders)
+			if err != nil {
+				t.Fatal(err)
+			}
+			health, output, err := prober.Probe(req, 1*time.Second)
 			if test.health == probe.Unknown && err == nil {
 				t.Errorf("case %d: expected error", i)
 			}
@@ -415,7 +446,9 @@ func TestHTTPProbeChecker_NonLocalRedirects(t *testing.T) {
 			prober := New(followNonLocalRedirects)
 			target, err := url.Parse(server.URL + "/redirect?loc=" + url.QueryEscape(test.redirect))
 			require.NoError(t, err)
-			result, _, _ := prober.Probe(target, nil, wait.ForeverTestTimeout)
+			req, err := NewProbeRequest(target, nil)
+			require.NoError(t, err)
+			result, _, _ := prober.Probe(req, wait.ForeverTestTimeout)
 			assert.Equal(t, test.expectLocalResult, result)
 		})
 		t.Run(desc+"-nonlocal", func(t *testing.T) {
@@ -423,7 +456,9 @@ func TestHTTPProbeChecker_NonLocalRedirects(t *testing.T) {
 			prober := New(followNonLocalRedirects)
 			target, err := url.Parse(server.URL + "/redirect?loc=" + url.QueryEscape(test.redirect))
 			require.NoError(t, err)
-			result, _, _ := prober.Probe(target, nil, wait.ForeverTestTimeout)
+			req, err := NewProbeRequest(target, nil)
+			require.NoError(t, err)
+			result, _, _ := prober.Probe(req, wait.ForeverTestTimeout)
 			assert.Equal(t, test.expectNonLocalResult, result)
 		})
 	}
@@ -465,7 +500,9 @@ func TestHTTPProbeChecker_HostHeaderPreservedAfterRedirect(t *testing.T) {
 			prober := New(followNonLocalRedirects)
 			target, err := url.Parse(server.URL + "/redirect")
 			require.NoError(t, err)
-			result, _, _ := prober.Probe(target, headers, wait.ForeverTestTimeout)
+			req, err := NewProbeRequest(target, headers)
+			require.NoError(t, err)
+			result, _, _ := prober.Probe(req, wait.ForeverTestTimeout)
 			assert.Equal(t, test.expectedResult, result)
 		})
 		t.Run(desc+"nonlocal", func(t *testing.T) {
@@ -473,7 +510,9 @@ func TestHTTPProbeChecker_HostHeaderPreservedAfterRedirect(t *testing.T) {
 			prober := New(followNonLocalRedirects)
 			target, err := url.Parse(server.URL + "/redirect")
 			require.NoError(t, err)
-			result, _, _ := prober.Probe(target, headers, wait.ForeverTestTimeout)
+			req, err := NewProbeRequest(target, headers)
+			require.NoError(t, err)
+			result, _, _ := prober.Probe(req, wait.ForeverTestTimeout)
 			assert.Equal(t, test.expectedResult, result)
 		})
 	}
@@ -506,7 +545,9 @@ func TestHTTPProbeChecker_PayloadTruncated(t *testing.T) {
 		prober := New(false)
 		target, err := url.Parse(server.URL + "/success")
 		require.NoError(t, err)
-		result, body, err := prober.Probe(target, headers, wait.ForeverTestTimeout)
+		req, err := NewProbeRequest(target, headers)
+		require.NoError(t, err)
+		result, body, err := prober.Probe(req, wait.ForeverTestTimeout)
 		assert.NoError(t, err)
 		assert.Equal(t, probe.Success, result)
 		assert.Equal(t, string(truncatedPayload), body)
@@ -539,7 +580,9 @@ func TestHTTPProbeChecker_PayloadNormal(t *testing.T) {
 		prober := New(false)
 		target, err := url.Parse(server.URL + "/success")
 		require.NoError(t, err)
-		result, body, err := prober.Probe(target, headers, wait.ForeverTestTimeout)
+		req, err := NewProbeRequest(target, headers)
+		require.NoError(t, err)
+		result, body, err := prober.Probe(req, wait.ForeverTestTimeout)
 		assert.NoError(t, err)
 		assert.Equal(t, probe.Success, result)
 		assert.Equal(t, string(normalPayload), body)

@@ -279,6 +279,10 @@ func TestReasonForErrorSupportsWrappedErrors(t *testing.T) {
 			err:            fmt.Errorf("wrapping: %w", fmt.Errorf("some more: %w", errors.New("hello"))),
 			expectedReason: metav1.StatusReasonUnknown,
 		},
+		{
+			name:           "Nil",
+			expectedReason: metav1.StatusReasonUnknown,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -326,6 +330,10 @@ func TestIsTooManyRequestsSupportsWrappedErrors(t *testing.T) {
 			err:         fmt.Errorf("Wrapping: %w", &StatusError{ErrStatus: metav1.Status{Code: http.StatusNotFound}}),
 			expectMatch: false,
 		},
+		{
+			name:        "Nil",
+			expectMatch: false,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -368,6 +376,10 @@ func TestIsRequestEntityTooLargeErrorSupportsWrappedErrors(t *testing.T) {
 		{
 			name:        "Nested,no match",
 			err:         fmt.Errorf("Wrapping: %w", &StatusError{ErrStatus: metav1.Status{Code: http.StatusNotFound}}),
+			expectMatch: false,
+		},
+		{
+			name:        "Nil",
 			expectMatch: false,
 		},
 	}
@@ -414,6 +426,10 @@ func TestIsUnexpectedServerError(t *testing.T) {
 			err:         fmt.Errorf("wrapping: %w", fmt.Errorf("some more: %w", errors.New("hello"))),
 			expectMatch: false,
 		},
+		{
+			name:        "Nil",
+			expectMatch: false,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -452,6 +468,10 @@ func TestIsUnexpectedObjectError(t *testing.T) {
 		{
 			name:        "Nested, no match",
 			err:         fmt.Errorf("wrapping: %w", fmt.Errorf("some more: %w", errors.New("hello"))),
+			expectMatch: false,
+		},
+		{
+			name:        "Nil",
 			expectMatch: false,
 		},
 	}
@@ -497,6 +517,10 @@ func TestSuggestsClientDelaySupportsWrapping(t *testing.T) {
 		{
 			name:        "Nested, no match",
 			err:         fmt.Errorf("wrapping: %w", fmt.Errorf("some more: %w", errors.New("hello"))),
+			expectMatch: false,
+		},
+		{
+			name:        "Nil",
 			expectMatch: false,
 		},
 	}
@@ -600,4 +624,82 @@ func TestIsErrorTypesByReasonAndCode(t *testing.T) {
 		})
 
 	}
+}
+
+func TestStatusCauseSupportsWrappedErrors(t *testing.T) {
+	err := &StatusError{ErrStatus: metav1.Status{
+		Details: &metav1.StatusDetails{
+			Causes: []metav1.StatusCause{{Type: "SomeCause"}},
+		},
+	}}
+
+	if cause, ok := StatusCause(nil, "SomeCause"); ok {
+		t.Errorf("expected no cause for nil, got %v: %#v", ok, cause)
+	}
+	if cause, ok := StatusCause(errors.New("boom"), "SomeCause"); ok {
+		t.Errorf("expected no cause for wrong type, got %v: %#v", ok, cause)
+	}
+
+	if cause, ok := StatusCause(err, "Other"); ok {
+		t.Errorf("expected no cause for wrong name, got %v: %#v", ok, cause)
+	}
+	if cause, ok := StatusCause(err, "SomeCause"); !ok || cause != err.ErrStatus.Details.Causes[0] {
+		t.Errorf("expected cause, got %v: %#v", ok, cause)
+	}
+
+	wrapped := fmt.Errorf("once: %w", err)
+	if cause, ok := StatusCause(wrapped, "SomeCause"); !ok || cause != err.ErrStatus.Details.Causes[0] {
+		t.Errorf("expected cause when wrapped, got %v: %#v", ok, cause)
+	}
+
+	nested := fmt.Errorf("twice: %w", wrapped)
+	if cause, ok := StatusCause(nested, "SomeCause"); !ok || cause != err.ErrStatus.Details.Causes[0] {
+		t.Errorf("expected cause when nested, got %v: %#v", ok, cause)
+	}
+}
+
+func BenchmarkIsAlreadyExistsWrappedErrors(b *testing.B) {
+	err := NewAlreadyExists(schema.GroupResource{}, "")
+	wrapped := fmt.Errorf("once: %w", err)
+
+	b.Run("Nil", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			IsAlreadyExists(nil)
+		}
+	})
+
+	b.Run("Bare", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			IsAlreadyExists(err)
+		}
+	})
+
+	b.Run("Wrapped", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			IsAlreadyExists(wrapped)
+		}
+	})
+}
+
+func BenchmarkIsNotFoundWrappedErrors(b *testing.B) {
+	err := NewNotFound(schema.GroupResource{}, "")
+	wrapped := fmt.Errorf("once: %w", err)
+
+	b.Run("Nil", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			IsNotFound(nil)
+		}
+	})
+
+	b.Run("Bare", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			IsNotFound(err)
+		}
+	})
+
+	b.Run("Wrapped", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			IsNotFound(wrapped)
+		}
+	})
 }

@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strconv"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
@@ -39,7 +38,6 @@ import (
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
-	"k8s.io/component-base/metrics/prometheus/ratelimiter"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/api/v1/endpoints"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
@@ -64,20 +62,6 @@ const (
 	// may truncate endpoints exceeding this length.
 	maxCapacity = 1000
 
-	// TolerateUnreadyEndpointsAnnotation is an annotation on the Service denoting if the endpoints
-	// controller should go ahead and create endpoints for unready pods. This annotation is
-	// currently only used by StatefulSets, where we need the pod to be DNS
-	// resolvable during initialization and termination. In this situation we
-	// create a headless Service just for the StatefulSet, and clients shouldn't
-	// be using this Service for anything so unready endpoints don't matter.
-	// Endpoints of these Services retain their DNS records and continue
-	// receiving traffic for the Service from the moment the kubelet starts all
-	// containers in the pod and marks it "Running", till the kubelet stops all
-	// containers and deletes the pod from the apiserver.
-	// This field is deprecated. v1.Service.PublishNotReadyAddresses will replace it
-	// subsequent releases.  It will be removed no sooner than 1.13.
-	TolerateUnreadyEndpointsAnnotation = "service.alpha.kubernetes.io/tolerate-unready-endpoints"
-
 	// truncated is a possible value for `endpoints.kubernetes.io/over-capacity` annotation on an
 	// endpoint resource and indicates that the number of endpoints have been truncated to
 	// maxCapacity
@@ -88,13 +72,8 @@ const (
 func NewEndpointController(podInformer coreinformers.PodInformer, serviceInformer coreinformers.ServiceInformer,
 	endpointsInformer coreinformers.EndpointsInformer, client clientset.Interface, endpointUpdatesBatchPeriod time.Duration) *Controller {
 	broadcaster := record.NewBroadcaster()
-	broadcaster.StartStructuredLogging(0)
-	broadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: client.CoreV1().Events("")})
 	recorder := broadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "endpoint-controller"})
 
-	if client != nil && client.CoreV1().RESTClient().GetRateLimiter() != nil {
-		ratelimiter.RegisterMetricAndTrackRateLimiterUsage("endpoint_controller", client.CoreV1().RESTClient().GetRateLimiter())
-	}
 	e := &Controller{
 		client:           client,
 		queue:            workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "endpoint"),
@@ -188,6 +167,12 @@ type Controller struct {
 // endpoints will be handled in parallel.
 func (e *Controller) Run(ctx context.Context, workers int) {
 	defer utilruntime.HandleCrash()
+
+	// Start events processing pipeline.
+	e.eventBroadcaster.StartStructuredLogging(0)
+	e.eventBroadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: e.client.CoreV1().Events("")})
+	defer e.eventBroadcaster.Shutdown()
+
 	defer e.queue.ShutDown()
 
 	klog.Infof("Starting endpoint controller")
@@ -247,7 +232,7 @@ func podToEndpointAddressForService(svc *v1.Service, pod *v1.Pod) (*v1.EndpointA
 			// this is *most probably* the case.
 
 			// if the family was incorrectly identified then this will be corrected once the
-			// the upgrade is completed (controller connects to api-server that correctly defaults services)
+			// upgrade is completed (controller connects to api-server that correctly defaults services)
 			if utilnet.IsIPv6String(pod.Status.PodIP) {
 				ipFamily = v1.IPv6Protocol
 			}
@@ -270,11 +255,10 @@ func podToEndpointAddressForService(svc *v1.Service, pod *v1.Pod) (*v1.EndpointA
 		IP:       endpointIP,
 		NodeName: &pod.Spec.NodeName,
 		TargetRef: &v1.ObjectReference{
-			Kind:            "Pod",
-			Namespace:       pod.ObjectMeta.Namespace,
-			Name:            pod.ObjectMeta.Name,
-			UID:             pod.ObjectMeta.UID,
-			ResourceVersion: pod.ObjectMeta.ResourceVersion,
+			Kind:      "Pod",
+			Namespace: pod.ObjectMeta.Namespace,
+			Name:      pod.ObjectMeta.Name,
+			UID:       pod.ObjectMeta.UID,
 		},
 	}, nil
 }
@@ -418,17 +402,6 @@ func (e *Controller) syncService(ctx context.Context, key string) error {
 		return err
 	}
 
-	// If the user specified the older (deprecated) annotation, we have to respect it.
-	tolerateUnreadyEndpoints := service.Spec.PublishNotReadyAddresses
-	if v, ok := service.Annotations[TolerateUnreadyEndpointsAnnotation]; ok {
-		b, err := strconv.ParseBool(v)
-		if err == nil {
-			tolerateUnreadyEndpoints = b
-		} else {
-			utilruntime.HandleError(fmt.Errorf("Failed to parse annotation %v: %v", TolerateUnreadyEndpointsAnnotation, err))
-		}
-	}
-
 	// We call ComputeEndpointLastChangeTriggerTime here to make sure that the
 	// state of the trigger time tracker gets updated even if the sync turns out
 	// to be no-op and we don't update the endpoints object.
@@ -440,7 +413,7 @@ func (e *Controller) syncService(ctx context.Context, key string) error {
 	var totalNotReadyEps int
 
 	for _, pod := range pods {
-		if !endpointutil.ShouldPodBeInEndpoints(pod, tolerateUnreadyEndpoints) {
+		if !endpointutil.ShouldPodBeInEndpoints(pod, service.Spec.PublishNotReadyAddresses) {
 			klog.V(5).Infof("Pod %s/%s is not included on endpoints for Service %s/%s", pod.Namespace, pod.Name, service.Namespace, service.Name)
 			continue
 		}
@@ -449,7 +422,7 @@ func (e *Controller) syncService(ctx context.Context, key string) error {
 		if err != nil {
 			// this will happen, if the cluster runs with some nodes configured as dual stack and some as not
 			// such as the case of an upgrade..
-			klog.V(2).Infof("failed to find endpoint for service:%v with ClusterIP:%v on pod:%v with error:%v", service.Name, service.Spec.ClusterIP, pod.Name, err)
+			klog.V(2).Infof("Failed to find endpoint for service:%s with ClusterIP:%s on pod:%s with error:%v", service.Name, service.Spec.ClusterIP, klog.KObj(pod), err)
 			continue
 		}
 
@@ -461,7 +434,7 @@ func (e *Controller) syncService(ctx context.Context, key string) error {
 		// Allow headless service not to have ports.
 		if len(service.Spec.Ports) == 0 {
 			if service.Spec.ClusterIP == api.ClusterIPNone {
-				subsets, totalReadyEps, totalNotReadyEps = addEndpointSubset(subsets, pod, epa, nil, tolerateUnreadyEndpoints)
+				subsets, totalReadyEps, totalNotReadyEps = addEndpointSubset(subsets, pod, epa, nil, service.Spec.PublishNotReadyAddresses)
 				// No need to repack subsets for headless service without ports.
 			}
 		} else {
@@ -475,7 +448,7 @@ func (e *Controller) syncService(ctx context.Context, key string) error {
 				epp := endpointPortFromServicePort(servicePort, portNum)
 
 				var readyEps, notReadyEps int
-				subsets, readyEps, notReadyEps = addEndpointSubset(subsets, pod, epa, epp, tolerateUnreadyEndpoints)
+				subsets, readyEps, notReadyEps = addEndpointSubset(subsets, pod, epa, epp, service.Spec.PublishNotReadyAddresses)
 				totalReadyEps = totalReadyEps + readyEps
 				totalNotReadyEps = totalNotReadyEps + notReadyEps
 			}

@@ -93,8 +93,7 @@ type Endpoint struct {
 	// +optional
 	DeprecatedTopology map[string]string
 	// nodeName represents the name of the Node hosting this endpoint. This can
-	// be used to determine endpoints local to a Node. This field can be enabled
-	// with the EndpointSliceNodeName feature gate.
+	// be used to determine endpoints local to a Node.
 	// +optional
 	NodeName *string
 	// zone is the name of the Zone this endpoint exists in.
@@ -119,15 +118,13 @@ type EndpointConditions struct {
 	// serving is identical to ready except that it is set regardless of the
 	// terminating state of endpoints. This condition should be set to true for
 	// a ready endpoint that is terminating. If nil, consumers should defer to
-	// the ready condition. This field can be enabled with the
-	// EndpointSliceTerminatingCondition feature gate.
+	// the ready condition.
 	// +optional
 	Serving *bool
 
 	// terminating indicates that this endpoint is terminating. A nil value
 	// indicates an unknown state. Consumers should interpret this unknown state
-	// to mean that the endpoint is not terminating. This field can be enabled
-	// with the EndpointSliceTerminatingCondition feature gate.
+	// to mean that the endpoint is not terminating.
 	// +optional
 	Terminating *bool
 }
@@ -165,7 +162,7 @@ type EndpointPort struct {
 	// The application protocol for this port.
 	// This field follows standard Kubernetes label syntax.
 	// Un-prefixed names are reserved for IANA standard service names (as per
-	// RFC-6335 and http://www.iana.org/assignments/service-names).
+	// RFC-6335 and https://www.iana.org/assignments/service-names).
 	// Non-standard protocols should use prefixed names such as
 	// mycompany.com/my-custom-protocol.
 	// +optional

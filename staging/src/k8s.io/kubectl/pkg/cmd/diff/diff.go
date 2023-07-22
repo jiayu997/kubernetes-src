@@ -35,7 +35,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/cli-runtime/pkg/resource"
-	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/klog/v2"
 	"k8s.io/kubectl/pkg/cmd/apply"
@@ -44,6 +43,7 @@ import (
 	"k8s.io/kubectl/pkg/util"
 	"k8s.io/kubectl/pkg/util/i18n"
 	"k8s.io/kubectl/pkg/util/openapi"
+	"k8s.io/kubectl/pkg/util/prune"
 	"k8s.io/kubectl/pkg/util/templates"
 	"k8s.io/utils/exec"
 	"sigs.k8s.io/yaml"
@@ -103,26 +103,20 @@ func diffError(err error) exec.ExitError {
 type DiffOptions struct {
 	FilenameOptions resource.FilenameOptions
 
-	ServerSideApply bool
-	FieldManager    string
-	ForceConflicts  bool
+	ServerSideApply   bool
+	FieldManager      string
+	ForceConflicts    bool
+	ShowManagedFields bool
 
 	Selector         string
 	OpenAPISchema    openapi.Resources
-	DiscoveryClient  discovery.DiscoveryInterface
 	DynamicClient    dynamic.Interface
-	DryRunVerifier   *resource.DryRunVerifier
+	DryRunVerifier   *resource.QueryParamVerifier
 	CmdNamespace     string
 	EnforceNamespace bool
 	Builder          *resource.Builder
 	Diff             *DiffProgram
-}
-
-func validateArgs(cmd *cobra.Command, args []string) error {
-	if len(args) != 0 {
-		return cmdutil.UsageErrorf(cmd, "Unexpected args: %v", args)
-	}
-	return nil
+	pruner           *pruner
 }
 
 func NewDiffOptions(ioStreams genericclioptions.IOStreams) *DiffOptions {
@@ -143,8 +137,8 @@ func NewCmdDiff(f cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.C
 		Long:                  diffLong,
 		Example:               diffExample,
 		Run: func(cmd *cobra.Command, args []string) {
-			cmdutil.CheckDiffErr(options.Complete(f, cmd))
-			cmdutil.CheckDiffErr(validateArgs(cmd, args))
+			cmdutil.CheckDiffErr(options.Complete(f, cmd, args))
+			cmdutil.CheckDiffErr(options.Validate())
 			// `kubectl diff` propagates the error code from
 			// diff or `KUBECTL_EXTERNAL_DIFF`. Also, we
 			// don't want to print an error if diff returns
@@ -169,10 +163,13 @@ func NewCmdDiff(f cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.C
 	})
 
 	usage := "contains the configuration to diff"
-	cmd.Flags().StringVarP(&options.Selector, "selector", "l", options.Selector, "Selector (label query) to filter on, supports '=', '==', and '!='.(e.g. -l key1=value1,key2=value2)")
+	cmd.Flags().StringArray("prune-allowlist", []string{}, "Overwrite the default whitelist with <group/version/kind> for --prune")
+	cmd.Flags().Bool("prune", false, "Include resources that would be deleted by pruning. Can be used with -l and default shows all resources would be pruned")
+	cmd.Flags().BoolVar(&options.ShowManagedFields, "show-managed-fields", options.ShowManagedFields, "If true, include managed fields in the diff.")
 	cmdutil.AddFilenameOptionFlags(cmd, &options.FilenameOptions, usage)
 	cmdutil.AddServerSideApplyFlags(cmd)
 	cmdutil.AddFieldManagerFlagVar(cmd, &options.FieldManager, apply.FieldManagerClientSideApply)
+	cmdutil.AddLabelSelectorFlagVar(cmd, &options.Selector)
 
 	return cmd
 }
@@ -560,7 +557,7 @@ func NewDiffer(from, to string) (*Differ, error) {
 }
 
 // Diff diffs to versions of a specific object, and print both versions to directories.
-func (d *Differ) Diff(obj Object, printer Printer) error {
+func (d *Differ) Diff(obj Object, printer Printer, showManagedFields bool) error {
 	from, err := d.From.getObject(obj)
 	if err != nil {
 		return err
@@ -568,6 +565,11 @@ func (d *Differ) Diff(obj Object, printer Printer) error {
 	to, err := d.To.getObject(obj)
 	if err != nil {
 		return err
+	}
+
+	if !showManagedFields {
+		from = omitManagedFields(from)
+		to = omitManagedFields(to)
 	}
 
 	// Mask secret values if object is V1Secret
@@ -588,6 +590,16 @@ func (d *Differ) Diff(obj Object, printer Printer) error {
 	return nil
 }
 
+func omitManagedFields(o runtime.Object) runtime.Object {
+	a, err := meta.Accessor(o)
+	if err != nil {
+		// The object is not a `metav1.Object`, ignore it.
+		return o
+	}
+	a.SetManagedFields(nil)
+	return o
+}
+
 // Run runs the diff program against both directories.
 func (d *Differ) Run(diff *DiffProgram) error {
 	return diff.Run(d.From.Dir.Name, d.To.Dir.Name)
@@ -603,7 +615,11 @@ func isConflict(err error) bool {
 	return err != nil && errors.IsConflict(err)
 }
 
-func (o *DiffOptions) Complete(f cmdutil.Factory, cmd *cobra.Command) error {
+func (o *DiffOptions) Complete(f cmdutil.Factory, cmd *cobra.Command, args []string) error {
+	if len(args) != 0 {
+		return cmdutil.UsageErrorf(cmd, "Unexpected args: %v", args)
+	}
+
 	var err error
 
 	err = o.FilenameOptions.RequireFilenameOrKustomize()
@@ -625,28 +641,36 @@ func (o *DiffOptions) Complete(f cmdutil.Factory, cmd *cobra.Command) error {
 		}
 	}
 
-	o.DiscoveryClient, err = f.ToDiscoveryClient()
-	if err != nil {
-		return err
-	}
-
 	o.DynamicClient, err = f.DynamicClient()
 	if err != nil {
 		return err
 	}
 
-	o.DryRunVerifier = resource.NewDryRunVerifier(o.DynamicClient, f.OpenAPIGetter())
+	o.DryRunVerifier = resource.NewQueryParamVerifier(o.DynamicClient, f.OpenAPIGetter(), resource.QueryParamDryRun)
 
 	o.CmdNamespace, o.EnforceNamespace, err = f.ToRawKubeConfigLoader().Namespace()
 	if err != nil {
 		return err
 	}
 
+	if cmdutil.GetFlagBool(cmd, "prune") {
+		mapper, err := f.ToRESTMapper()
+		if err != nil {
+			return err
+		}
+
+		resources, err := prune.ParseResources(mapper, cmdutil.GetFlagStringArray(cmd, "prune-allowlist"))
+		if err != nil {
+			return err
+		}
+		o.pruner = newPruner(o.DynamicClient, mapper, resources)
+	}
+
 	o.Builder = f.NewBuilder()
 	return nil
 }
 
-// RunDiff uses the factory to parse file arguments, find the version to
+// Run uses the factory to parse file arguments, find the version to
 // diff, and find each Info object for each files, and runs against the
 // differ.
 func (o *DiffOptions) Run() error {
@@ -707,7 +731,11 @@ func (o *DiffOptions) Run() error {
 				IOStreams:       o.Diff.IOStreams,
 			}
 
-			err = differ.Diff(obj, printer)
+			if o.pruner != nil {
+				o.pruner.MarkVisited(info)
+			}
+
+			err = differ.Diff(obj, printer, o.ShowManagedFields)
 			if !isConflict(err) {
 				break
 			}
@@ -717,9 +745,57 @@ func (o *DiffOptions) Run() error {
 
 		return err
 	})
+
+	if o.pruner != nil {
+		prunedObjs, err := o.pruner.pruneAll(o.CmdNamespace != "")
+		if err != nil {
+			klog.Warningf("pruning failed and could not be evaluated err: %v", err)
+		}
+
+		// Print pruned objects into old file and thus, diff
+		// command will show them as pruned.
+		for _, p := range prunedObjs {
+			name, err := getObjectName(p)
+			if err != nil {
+				klog.Warningf("pruning failed and object name could not be retrieved: %v", err)
+				continue
+			}
+			if err := differ.From.Print(name, p, printer); err != nil {
+				return err
+			}
+		}
+	}
+
 	if err != nil {
 		return err
 	}
 
 	return differ.Run(o.Diff)
+}
+
+// Validate makes sure provided values for DiffOptions are valid
+func (o *DiffOptions) Validate() error {
+	return nil
+}
+
+func getObjectName(obj runtime.Object) (string, error) {
+	gvk := obj.GetObjectKind().GroupVersionKind()
+	metadata, err := meta.Accessor(obj)
+	if err != nil {
+		return "", err
+	}
+	name := metadata.GetName()
+	ns := metadata.GetNamespace()
+
+	group := ""
+	if gvk.Group != "" {
+		group = fmt.Sprintf("%v.", gvk.Group)
+	}
+	return group + fmt.Sprintf(
+		"%v.%v.%v.%v",
+		gvk.Version,
+		gvk.Kind,
+		ns,
+		name,
+	), nil
 }

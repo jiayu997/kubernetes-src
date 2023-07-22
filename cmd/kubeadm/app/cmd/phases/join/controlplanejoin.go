@@ -48,6 +48,9 @@ func getControlPlaneJoinPhaseFlags(name string) []string {
 	if name != "mark-control-plane" {
 		flags = append(flags, options.APIServerAdvertiseAddress)
 	}
+	if name != "update-status" {
+		flags = append(flags, options.DryRun)
+	}
 	return flags
 }
 
@@ -116,7 +119,7 @@ func runEtcdPhase(c workflow.RunData) error {
 	}
 
 	// gets access to the cluster using the identity defined in admin.conf
-	client, err := data.ClientSet()
+	client, err := data.Client()
 	if err != nil {
 		return errors.Wrap(err, "couldn't create Kubernetes client")
 	}
@@ -126,7 +129,7 @@ func runEtcdPhase(c workflow.RunData) error {
 	}
 	// in case of local etcd
 	if cfg.Etcd.External != nil {
-		fmt.Println("[control-plane-join] using external etcd - no local stacked instance added")
+		fmt.Println("[control-plane-join] Using external etcd - no local stacked instance added")
 		return nil
 	}
 
@@ -136,7 +139,7 @@ func runEtcdPhase(c workflow.RunData) error {
 			return err
 		}
 	} else {
-		fmt.Printf("[dryrun] Would ensure that %q directory is present\n", cfg.Etcd.Local.DataDir)
+		fmt.Printf("[control-plane-join] Would ensure that %q directory is present\n", cfg.Etcd.Local.DataDir)
 	}
 
 	// Adds a new etcd instance; in order to do this the new etcd instance should be "announced" to
@@ -180,7 +183,7 @@ func runMarkControlPlanePhase(c workflow.RunData) error {
 	}
 
 	// gets access to the cluster using the identity defined in admin.conf
-	client, err := data.ClientSet()
+	client, err := data.Client()
 	if err != nil {
 		return errors.Wrap(err, "couldn't create Kubernetes client")
 	}
@@ -194,7 +197,7 @@ func runMarkControlPlanePhase(c workflow.RunData) error {
 			return errors.Wrap(err, "error applying control-plane label and taints")
 		}
 	} else {
-		fmt.Printf("[dryrun] Would mark node %s as a control-plane\n", cfg.NodeRegistration.Name)
+		fmt.Printf("[control-plane-join] Would mark node %s as a control-plane\n", cfg.NodeRegistration.Name)
 	}
 
 	return nil

@@ -19,9 +19,10 @@ package storage
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
 	v1 "k8s.io/api/core/v1"
@@ -39,6 +40,7 @@ import (
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	"k8s.io/kubernetes/test/e2e/storage/testsuites"
 	"k8s.io/kubernetes/test/e2e/storage/utils"
+	admissionapi "k8s.io/pod-security-admission/api"
 )
 
 // This test needs to run in serial because other tests could interfere
@@ -55,6 +57,7 @@ var _ = utils.SIGDescribe("[Serial] Volume metrics", func() {
 		err            error
 	)
 	f := framework.NewDefaultFramework("pv")
+	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelBaseline
 
 	ginkgo.BeforeEach(func() {
 		c = f.ClientSet
@@ -143,7 +146,6 @@ var _ = utils.SIGDescribe("[Serial] Volume metrics", func() {
 		err = e2epod.WaitTimeoutForPodRunningInNamespace(c, pod.Name, pod.Namespace, f.Timeouts.PodStart)
 		framework.ExpectNoError(err, "Error starting pod %s", pod.Name)
 
-		framework.Logf("Deleting pod %q/%q", pod.Namespace, pod.Name)
 		framework.ExpectNoError(e2epod.DeletePodWithWait(c, pod))
 
 		updatedStorageMetrics := waitForDetachAndGrabMetrics(storageOpMetrics, metricsGrabber, pluginName)
@@ -151,7 +153,7 @@ var _ = utils.SIGDescribe("[Serial] Volume metrics", func() {
 		framework.ExpectNotEqual(len(updatedStorageMetrics.latencyMetrics), 0, "Error fetching c-m updated storage metrics")
 		framework.ExpectNotEqual(len(updatedStorageMetrics.statusMetrics), 0, "Error fetching c-m updated storage metrics")
 
-		volumeOperations := []string{"volume_provision", "volume_detach", "volume_attach"}
+		volumeOperations := []string{"volume_detach", "volume_attach"}
 
 		for _, volumeOp := range volumeOperations {
 			verifyMetricCount(storageOpMetrics, updatedStorageMetrics, volumeOp, false)
@@ -167,12 +169,6 @@ var _ = utils.SIGDescribe("[Serial] Volume metrics", func() {
 		defaultClass, err := c.StorageV1().StorageClasses().Get(context.TODO(), defaultScName, metav1.GetOptions{})
 		framework.ExpectNoError(err, "Error getting default storageclass: %v", err)
 		pluginName := defaultClass.Provisioner
-
-		controllerMetrics, err := metricsGrabber.GrabFromControllerManager()
-
-		framework.ExpectNoError(err, "Error getting c-m metrics : %v", err)
-
-		storageOpMetrics := getControllerStorageMetrics(controllerMetrics, pluginName)
 
 		invalidSc = &storagev1.StorageClass{
 			ObjectMeta: metav1.ObjectMeta{
@@ -210,7 +206,6 @@ var _ = utils.SIGDescribe("[Serial] Volume metrics", func() {
 		updatedStorageMetrics := getControllerStorageMetrics(updatedControllerMetrics, pluginName)
 
 		framework.ExpectNotEqual(len(updatedStorageMetrics.statusMetrics), 0, "Error fetching c-m updated storage metrics")
-		verifyMetricCount(storageOpMetrics, updatedStorageMetrics, "volume_provision", true)
 	}
 
 	filesystemMode := func(isEphemeral bool) {
@@ -269,7 +264,9 @@ var _ = utils.SIGDescribe("[Serial] Volume metrics", func() {
 		for _, key := range volumeStatKeys {
 			kubeletKeyName := fmt.Sprintf("%s_%s", kubeletmetrics.KubeletSubsystem, key)
 			found := findVolumeStatMetric(kubeletKeyName, pvcNamespace, pvcName, kubeMetrics)
-			framework.ExpectEqual(found, true, "PVC %s, Namespace %s not found for %s", pvcName, pvcNamespace, kubeletKeyName)
+			if !found {
+				framework.Failf("PVC %s, Namespace %s not found for %s", pvcName, pvcNamespace, kubeletKeyName)
+			}
 		}
 
 		framework.Logf("Deleting pod %q/%q", pod.Namespace, pod.Name)
@@ -333,7 +330,9 @@ var _ = utils.SIGDescribe("[Serial] Volume metrics", func() {
 		for _, key := range volumeStatKeys {
 			kubeletKeyName := fmt.Sprintf("%s_%s", kubeletmetrics.KubeletSubsystem, key)
 			found := findVolumeStatMetric(kubeletKeyName, pvcNamespace, pvcName, kubeMetrics)
-			framework.ExpectEqual(found, true, "PVC %s, Namespace %s not found for %s", pvcName, pvcNamespace, kubeletKeyName)
+			if !found {
+				framework.Failf("PVC %s, Namespace %s not found for %s", pvcName, pvcNamespace, kubeletKeyName)
+			}
 		}
 
 		framework.Logf("Deleting pod %q/%q", pod.Namespace, pod.Name)
@@ -433,7 +432,9 @@ var _ = utils.SIGDescribe("[Serial] Volume metrics", func() {
 		// Forced detach metric should be present
 		forceDetachKey := "attachdetach_controller_forced_detaches"
 		_, ok := updatedControllerMetrics[forceDetachKey]
-		framework.ExpectEqual(ok, true, "Key %q not found in A/D Controller metrics", forceDetachKey)
+		if !ok {
+			framework.Failf("Key %q not found in A/D Controller metrics", forceDetachKey)
+		}
 
 		// Wait and validate
 		totalVolumesKey := "attachdetach_controller_total_volumes"
@@ -465,6 +466,8 @@ var _ = utils.SIGDescribe("[Serial] Volume metrics", func() {
 		ginkgo.It("should create prometheus metrics for volume provisioning and attach/detach", func() {
 			provisioning(isEphemeral)
 		})
+		// TODO(mauriciopoppe): after CSIMigration is turned on we're no longer reporting
+		// the volume_provision metric (removed in #106609), issue to investigate the bug #106773
 		ginkgo.It("should create prometheus metrics for volume provisioning errors [Slow]", func() {
 			provisioningError(isEphemeral)
 		})
@@ -718,10 +721,14 @@ func verifyMetricCount(oldMetrics, newMetrics *storageControllerMetrics, metricN
 
 	newLatencyCount, ok := newMetrics.latencyMetrics[metricName]
 	if !expectFailure {
-		framework.ExpectEqual(ok, true, "Error getting updated latency metrics for %s", metricName)
+		if !ok {
+			framework.Failf("Error getting updated latency metrics for %s", metricName)
+		}
 	}
 	newStatusCounts, ok := newMetrics.statusMetrics[metricName]
-	framework.ExpectEqual(ok, true, "Error getting updated status metrics for %s", metricName)
+	if !ok {
+		framework.Failf("Error getting updated status metrics for %s", metricName)
+	}
 
 	newStatusCount := int64(0)
 	if expectFailure {
@@ -744,27 +751,23 @@ func getControllerStorageMetrics(ms e2emetrics.ControllerManagerMetrics, pluginN
 
 	for method, samples := range ms {
 		switch method {
-
+		// from the base metric name "storage_operation_duration_seconds"
 		case "storage_operation_duration_seconds_count":
 			for _, sample := range samples {
 				count := int64(sample.Value)
 				operation := string(sample.Metric["operation_name"])
+				// if the volumes were provisioned with a CSI Driver
+				// the metric operation name will be prefixed with
+				// "kubernetes.io/csi:"
 				metricPluginName := string(sample.Metric["volume_plugin"])
-				if len(pluginName) > 0 && pluginName != metricPluginName {
-					continue
-				}
-				result.latencyMetrics[operation] = count
-			}
-		case "storage_operation_status_count":
-			for _, sample := range samples {
-				count := int64(sample.Value)
-				operation := string(sample.Metric["operation_name"])
 				status := string(sample.Metric["status"])
-				statusCounts := result.statusMetrics[operation]
-				metricPluginName := string(sample.Metric["volume_plugin"])
-				if len(pluginName) > 0 && pluginName != metricPluginName {
+				if strings.Index(metricPluginName, pluginName) < 0 {
+					// the metric volume plugin field doesn't match
+					// the default storageClass.Provisioner field
 					continue
 				}
+
+				statusCounts := result.statusMetrics[operation]
 				switch status {
 				case "success":
 					statusCounts.successCount = count
@@ -774,8 +777,8 @@ func getControllerStorageMetrics(ms e2emetrics.ControllerManagerMetrics, pluginN
 					statusCounts.otherCount = count
 				}
 				result.statusMetrics[operation] = statusCounts
+				result.latencyMetrics[operation] = count
 			}
-
 		}
 	}
 	return result

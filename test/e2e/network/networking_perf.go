@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/v2"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -33,8 +33,10 @@ import (
 	e2edaemonset "k8s.io/kubernetes/test/e2e/framework/daemonset"
 	e2edeployment "k8s.io/kubernetes/test/e2e/framework/deployment"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
+	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	"k8s.io/kubernetes/test/e2e/network/common"
 	imageutils "k8s.io/kubernetes/test/utils/image"
+	admissionapi "k8s.io/pod-security-admission/api"
 )
 
 const (
@@ -138,6 +140,7 @@ func iperf2ClientDaemonSet(client clientset.Interface, namespace string) (*appsv
 var _ = common.SIGDescribe("Networking IPerf2 [Feature:Networking-Performance]", func() {
 	// this test runs iperf2: one pod as a server, and a daemonset of clients
 	f := framework.NewDefaultFramework("network-perf")
+	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelBaseline
 
 	ginkgo.It(fmt.Sprintf("should run iperf2"), func() {
 		readySchedulableNodes, err := e2enode.GetReadySchedulableNodes(f.ClientSet)
@@ -232,7 +235,7 @@ var _ = common.SIGDescribe("Networking IPerf2 [Feature:Networking-Performance]",
 			podName := pod.Name
 			nodeName := pod.Spec.NodeName
 
-			iperfVersion := f.ExecShellInPod(podName, "iperf -v || true")
+			iperfVersion := e2epod.ExecShellInPod(f, podName, "iperf -v || true")
 			framework.Logf("iperf version: %s", iperfVersion)
 
 			for try := 0; ; try++ {
@@ -245,7 +248,7 @@ var _ = common.SIGDescribe("Networking IPerf2 [Feature:Networking-Performance]",
 				 */
 				command := fmt.Sprintf(`iperf %s -e -p %d --reportstyle C -i 1 -c %s && sleep 5`, familyStr, iperf2Port, serverServiceName)
 				framework.Logf("attempting to run command '%s' in client pod %s (node %s)", command, podName, nodeName)
-				output := f.ExecShellInPod(podName, command)
+				output := e2epod.ExecShellInPod(f, podName, command)
 				framework.Logf("output from exec on client pod %s (node %s): \n%s\n", podName, nodeName, output)
 
 				results, err := ParseIPerf2EnhancedResultsFromCSV(output)

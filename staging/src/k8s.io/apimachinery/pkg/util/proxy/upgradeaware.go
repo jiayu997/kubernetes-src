@@ -69,11 +69,6 @@ type UpgradeAwareHandler struct {
 	UpgradeTransport UpgradeRequestRoundTripper
 	// WrapTransport indicates whether the provided Transport should be wrapped with default proxy transport behavior (URL rewriting, X-Forwarded-* header setting)
 	WrapTransport bool
-	// InterceptRedirects determines whether the proxy should sniff backend responses for redirects,
-	// following them as necessary.
-	InterceptRedirects bool
-	// RequireSameHostRedirects only allows redirects to the same host. It is only used if InterceptRedirects=true.
-	RequireSameHostRedirects bool
 	// UseRequestLocation will use the incoming request URL when talking to the backend server.
 	UseRequestLocation bool
 	// UseLocationHost overrides the HTTP host header in requests to the backend server to use the Host from Location.
@@ -200,7 +195,7 @@ func proxyRedirectsforRootPath(path string, w http.ResponseWriter, req *http.Req
 
 	// From pkg/genericapiserver/endpoints/handlers/proxy.go#ServeHTTP:
 	// Redirect requests with an empty path to a location that ends with a '/'
-	// This is essentially a hack for http://issue.k8s.io/4958.
+	// This is essentially a hack for https://issue.k8s.io/4958.
 	// Note: Keep this code after tryUpgrade to not break that flow.
 	if len(path) == 0 && (method == http.MethodGet || method == http.MethodHead) {
 		var queryPart string
@@ -337,17 +332,12 @@ func (h *UpgradeAwareHandler) tryUpgrade(w http.ResponseWriter, req *http.Reques
 	// Only append X-Forwarded-For in the upgrade path, since httputil.NewSingleHostReverseProxy
 	// handles this in the non-upgrade path.
 	utilnet.AppendForwardedForHeader(clone)
-	if h.InterceptRedirects {
-		klog.V(6).Infof("Connecting to backend proxy (intercepting redirects) %s\n  Headers: %v", &location, clone.Header)
-		backendConn, rawResponse, err = utilnet.ConnectWithRedirects(req.Method, &location, clone.Header, req.Body, utilnet.DialerFunc(h.DialForUpgrade), h.RequireSameHostRedirects)
-	} else {
-		klog.V(6).Infof("Connecting to backend proxy (direct dial) %s\n  Headers: %v", &location, clone.Header)
-		if h.UseLocationHost {
-			clone.Host = h.Location.Host
-		}
-		clone.URL = &location
-		backendConn, err = h.DialForUpgrade(clone)
+	klog.V(6).Infof("Connecting to backend proxy (direct dial) %s\n  Headers: %v", &location, clone.Header)
+	if h.UseLocationHost {
+		clone.Host = h.Location.Host
 	}
+	clone.URL = &location
+	backendConn, err = h.DialForUpgrade(clone)
 	if err != nil {
 		klog.V(6).Infof("Proxy connection error: %v", err)
 		h.Responder.Error(w, req, err)

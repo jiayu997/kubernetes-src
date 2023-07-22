@@ -47,7 +47,7 @@ func CreateInitStaticPodManifestFiles(manifestDir, patchesDir string, cfg *kubea
 }
 
 // GetStaticPodSpecs returns all staticPodSpecs actualized to the context of the current configuration
-// NB. this methods holds the information about how kubeadm creates static pod manifests.
+// NB. this method holds the information about how kubeadm creates static pod manifests.
 func GetStaticPodSpecs(cfg *kubeadmapi.ClusterConfiguration, endpoint *kubeadmapi.APIEndpoint) map[string]v1.Pod {
 	// Get the required hostpath mounts
 	mounts := getHostPathVolumesForTheControlPlane(cfg)
@@ -103,7 +103,7 @@ func CreateStaticPodFiles(manifestDir, patchesDir string, cfg *kubeadmapi.Cluste
 	var err error
 	if features.Enabled(cfg.FeatureGates, features.RootlessControlPlane) {
 		if isDryRun {
-			fmt.Printf("[dryrun] Would create users and groups for %+v to run as non-root\n", componentNames)
+			fmt.Printf("[control-plane] Would create users and groups for %+v to run as non-root\n", componentNames)
 		} else {
 			usersAndGroups, err = staticpodutil.GetUsersAndGroups()
 			if err != nil {
@@ -127,7 +127,7 @@ func CreateStaticPodFiles(manifestDir, patchesDir string, cfg *kubeadmapi.Cluste
 
 		if features.Enabled(cfg.FeatureGates, features.RootlessControlPlane) {
 			if isDryRun {
-				fmt.Printf("[dryrun] Would update static pod manifest for %q to run run as non-root\n", componentName)
+				fmt.Printf("[control-plane] Would update static pod manifest for %q to run run as non-root\n", componentName)
 			} else {
 				if usersAndGroups != nil {
 					if err := staticpodutil.RunComponentAsNonRoot(componentName, &spec, usersAndGroups, cfg); err != nil {

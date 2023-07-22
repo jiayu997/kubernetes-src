@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	flowcontrol "k8s.io/api/flowcontrol/v1beta2"
+	flowcontrol "k8s.io/api/flowcontrol/v1beta3"
 	genericfeatures "k8s.io/apiserver/pkg/features"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	utilfc "k8s.io/apiserver/pkg/util/flowcontrol"
@@ -98,7 +98,7 @@ func (ft *fightTest) createMainInformer() {
 	myConfig = rest.AddUserAgent(myConfig, "audience")
 	myClientset := clientset.NewForConfigOrDie(myConfig)
 	informerFactory := informers.NewSharedInformerFactory(myClientset, 0)
-	inf := informerFactory.Flowcontrol().V1beta2().FlowSchemas().Informer()
+	inf := informerFactory.Flowcontrol().V1beta3().FlowSchemas().Informer()
 	inf.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			fs := obj.(*flowcontrol.FlowSchema)
@@ -126,7 +126,7 @@ func (ft *fightTest) createController(invert bool, i int) {
 	myConfig := rest.CopyConfig(ft.loopbackConfig)
 	myConfig = rest.AddUserAgent(myConfig, fieldMgr)
 	myClientset := clientset.NewForConfigOrDie(myConfig)
-	fcIfc := myClientset.FlowcontrolV1beta2()
+	fcIfc := myClientset.FlowcontrolV1beta3()
 	informerFactory := informers.NewSharedInformerFactory(myClientset, 0)
 	foundToDangling := func(found bool) bool { return !found }
 	if invert {
@@ -141,8 +141,8 @@ func (ft *fightTest) createController(invert bool, i int) {
 		FlowcontrolClient:      fcIfc,
 		ServerConcurrencyLimit: 200,             // server concurrency limit
 		RequestWaitLimit:       time.Minute / 4, // request wait limit
-		ReqsObsPairGenerator:   metrics.PriorityLevelConcurrencyObserverPairGenerator,
-		ExecSeatsObsGenerator:  metrics.PriorityLevelExecutionSeatsObserverGenerator,
+		ReqsGaugeVec:           metrics.PriorityLevelConcurrencyGaugeVec,
+		ExecSeatsGaugeVec:      metrics.PriorityLevelExecutionSeatsGaugeVec,
 		QueueSetFactory:        fqtesting.NewNoRestraintFactory(),
 	})
 	ft.ctlrs[invert][i] = ctlr
@@ -172,10 +172,10 @@ func (ft *fightTest) evaluate(tBeforeCreate, tAfterCreate time.Time) {
 }
 func TestConfigConsumerFight(t *testing.T) {
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, genericfeatures.APIPriorityAndFairness, true)()
-	_, loopbackConfig, closeFn := setup(t, 100, 100)
+	kubeConfig, closeFn := setup(t, 100, 100)
 	defer closeFn()
 	const teamSize = 3
-	ft := newFightTest(t, loopbackConfig, teamSize)
+	ft := newFightTest(t, kubeConfig, teamSize)
 	tBeforeCreate := time.Now()
 	ft.createMainInformer()
 	ft.foreach(ft.createController)

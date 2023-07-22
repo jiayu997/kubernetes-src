@@ -32,8 +32,9 @@ type resetData interface {
 	InputReader() io.Reader
 	IgnorePreflightErrors() sets.String
 	Cfg() *kubeadmapi.InitConfiguration
+	DryRun() bool
 	Client() clientset.Interface
-	AddDirsToClean(dirs ...string)
 	CertificatesDir() string
 	CRISocketPath() string
+	CleanupTmpDir() bool
 }

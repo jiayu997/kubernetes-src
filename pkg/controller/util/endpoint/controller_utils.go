@@ -294,11 +294,11 @@ func (sl portsInOrder) Less(i, j int) bool {
 // endpoint hashing (see hashEndpoint func for more info) and ignores difference
 // in ResourceVersion of TargetRef.
 func EndpointsEqualBeyondHash(ep1, ep2 *discovery.Endpoint) bool {
-	if stringPtrChanged(ep1.NodeName, ep1.NodeName) {
+	if stringPtrChanged(ep1.NodeName, ep2.NodeName) {
 		return false
 	}
 
-	if stringPtrChanged(ep1.Zone, ep1.Zone) {
+	if stringPtrChanged(ep1.Zone, ep2.Zone) {
 		return false
 	}
 
@@ -306,16 +306,11 @@ func EndpointsEqualBeyondHash(ep1, ep2 *discovery.Endpoint) bool {
 		return false
 	}
 
-	// Serving and Terminating will only be set when the EndpointSliceTerminatingCondition feature is on.
-	// Ignore their difference if the expected or actual value is nil, which means the feature enablement is changed.
-	// Otherwise all EndpointSlices in the system would be updated on the first controller-manager restart even without
-	// actual changes, leading to delay in processing legitimate updates.
-	// Its value will be set to the expected one when there is an actual change triggering update of this EndpointSlice.
-	if ep1.Conditions.Serving != nil && ep2.Conditions.Serving != nil && *ep1.Conditions.Serving != *ep2.Conditions.Serving {
+	if boolPtrChanged(ep1.Conditions.Serving, ep2.Conditions.Serving) {
 		return false
 	}
 
-	if ep1.Conditions.Terminating != nil && ep2.Conditions.Terminating != nil && *ep1.Conditions.Terminating != *ep2.Conditions.Terminating {
+	if boolPtrChanged(ep1.Conditions.Terminating, ep2.Conditions.Terminating) {
 		return false
 	}
 

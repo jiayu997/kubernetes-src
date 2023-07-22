@@ -17,6 +17,7 @@ limitations under the License.
 package logs
 
 import (
+	"io"
 	"os"
 	"time"
 
@@ -25,8 +26,8 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"k8s.io/component-base/config"
-	"k8s.io/component-base/logs/registry"
+	"k8s.io/component-base/featuregate"
+	logsapi "k8s.io/component-base/logs/api/v1"
 )
 
 var (
@@ -36,17 +37,33 @@ var (
 
 // NewJSONLogger creates a new json logr.Logger and its associated
 // flush function. The separate error stream is optional and may be nil.
-func NewJSONLogger(infoStream, errorStream zapcore.WriteSyncer) (logr.Logger, func()) {
-	encoder := zapcore.NewJSONEncoder(encoderConfig)
+// The encoder config is also optional.
+func NewJSONLogger(v logsapi.VerbosityLevel, infoStream, errorStream zapcore.WriteSyncer, encoderConfig *zapcore.EncoderConfig) (logr.Logger, func()) {
+	// zap levels are inverted: everything with a verbosity >= threshold gets logged.
+	zapV := -zapcore.Level(v)
+
+	if encoderConfig == nil {
+		encoderConfig = &zapcore.EncoderConfig{
+			MessageKey:     "msg",
+			CallerKey:      "caller",
+			NameKey:        "logger",
+			TimeKey:        "ts",
+			EncodeTime:     epochMillisTimeEncoder,
+			EncodeDuration: zapcore.StringDurationEncoder,
+			EncodeCaller:   zapcore.ShortCallerEncoder,
+		}
+	}
+
+	encoder := zapcore.NewJSONEncoder(*encoderConfig)
 	var core zapcore.Core
 	if errorStream == nil {
-		core = zapcore.NewCore(encoder, infoStream, zapcore.Level(-127))
+		core = zapcore.NewCore(encoder, infoStream, zapV)
 	} else {
 		highPriority := zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
-			return lvl >= zapcore.ErrorLevel
+			return lvl >= zapcore.ErrorLevel && lvl >= zapV
 		})
 		lowPriority := zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
-			return lvl < zapcore.ErrorLevel
+			return lvl < zapcore.ErrorLevel && lvl >= zapV
 		})
 		core = zapcore.NewTee(
 			zapcore.NewCore(encoder, errorStream, highPriority),
@@ -59,15 +76,6 @@ func NewJSONLogger(infoStream, errorStream zapcore.WriteSyncer) (logr.Logger, fu
 	}
 }
 
-var encoderConfig = zapcore.EncoderConfig{
-	MessageKey:     "msg",
-	CallerKey:      "caller",
-	TimeKey:        "ts",
-	EncodeTime:     epochMillisTimeEncoder,
-	EncodeDuration: zapcore.StringDurationEncoder,
-	EncodeCaller:   zapcore.ShortCallerEncoder,
-}
-
 func epochMillisTimeEncoder(_ time.Time, enc zapcore.PrimitiveArrayEncoder) {
 	nanos := timeNow().UnixNano()
 	millis := float64(nanos) / float64(time.Millisecond)
@@ -77,13 +85,25 @@ func epochMillisTimeEncoder(_ time.Time, enc zapcore.PrimitiveArrayEncoder) {
 // Factory produces JSON logger instances.
 type Factory struct{}
 
-var _ registry.LogFormatFactory = Factory{}
+var _ logsapi.LogFormatFactory = Factory{}
 
-func (f Factory) Create(options config.FormatOptions) (logr.Logger, func()) {
-	stderr := zapcore.Lock(os.Stderr)
-	if options.JSON.SplitStream {
-		stdout := zapcore.Lock(os.Stdout)
-		size := options.JSON.InfoBufferSize.Value()
+func (f Factory) Feature() featuregate.Feature {
+	return logsapi.LoggingBetaOptions
+}
+
+func (f Factory) Create(c logsapi.LoggingConfiguration) (logr.Logger, func()) {
+	// We intentionally avoid all os.File.Sync calls. Output is unbuffered,
+	// therefore we don't need to flush, and calling the underlying fsync
+	// would just slow down writing.
+	//
+	// The assumption is that logging only needs to ensure that data gets
+	// written to the output stream before the process terminates, but
+	// doesn't need to worry about data not being written because of a
+	// system crash or powerloss.
+	stderr := zapcore.Lock(AddNopSync(os.Stderr))
+	if c.Options.JSON.SplitStream {
+		stdout := zapcore.Lock(AddNopSync(os.Stdout))
+		size := c.Options.JSON.InfoBufferSize.Value()
 		if size > 0 {
 			// Prevent integer overflow.
 			if size > 2*1024*1024*1024 {
@@ -95,8 +115,21 @@ func (f Factory) Create(options config.FormatOptions) (logr.Logger, func()) {
 			}
 		}
 		// stdout for info messages, stderr for errors.
-		return NewJSONLogger(stdout, stderr)
+		return NewJSONLogger(c.Verbosity, stdout, stderr, nil)
 	}
 	// Write info messages and errors to stderr to prevent mixing with normal program output.
-	return NewJSONLogger(stderr, nil)
+	return NewJSONLogger(c.Verbosity, stderr, nil, nil)
+}
+
+// AddNoSync adds a NOP Sync implementation.
+func AddNopSync(writer io.Writer) zapcore.WriteSyncer {
+	return nopSync{Writer: writer}
+}
+
+type nopSync struct {
+	io.Writer
+}
+
+func (f nopSync) Sync() error {
+	return nil
 }

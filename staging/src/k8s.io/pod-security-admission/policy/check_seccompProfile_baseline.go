@@ -47,6 +47,8 @@ spec.initContainers[*].securityContext.seccompProfile.type
 const (
 	annotationKeyPod             = "seccomp.security.alpha.kubernetes.io/pod"
 	annotationKeyContainerPrefix = "container.seccomp.security.alpha.kubernetes.io/"
+
+	checkSeccompBaselineID CheckID = "seccompProfile_baseline"
 )
 
 func init() {
@@ -55,7 +57,7 @@ func init() {
 
 func CheckSeccompBaseline() Check {
 	return Check{
-		ID:    "seccompProfile_baseline",
+		ID:    checkSeccompBaselineID,
 		Level: api.LevelBaseline,
 		Versions: []VersionedCheck{
 			{

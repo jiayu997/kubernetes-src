@@ -161,7 +161,10 @@ func TestEventSeriesf(t *testing.T) {
 	// Don't call StartRecordingToSink, as we don't need neither refreshing event
 	// series nor finishing them in this tests and additional events updated would
 	// race with our expected ones.
-	broadcaster.startRecordingEvents(stopCh)
+	err = broadcaster.startRecordingEvents(stopCh)
+	if err != nil {
+		t.Fatal(err)
+	}
 	recorder.Eventf(regarding, related, isomorphicEvent.Type, isomorphicEvent.Reason, isomorphicEvent.Action, isomorphicEvent.Note, []interface{}{1})
 	// read from the chan as this was needed only to populate the cache
 	<-createEvent
@@ -216,7 +219,6 @@ func TestFinishSeries(t *testing.T) {
 	hostname, _ := os.Hostname()
 	testPod := &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			SelfLink:  "/api/v1/namespaces/baz/pods/foo",
 			Name:      "foo",
 			Namespace: "baz",
 			UID:       "bar",
@@ -288,7 +290,6 @@ func TestRefreshExistingEventSeries(t *testing.T) {
 	hostname, _ := os.Hostname()
 	testPod := &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			SelfLink:  "/api/v1/namespaces/baz/pods/foo",
 			Name:      "foo",
 			Namespace: "baz",
 			UID:       "bar",
