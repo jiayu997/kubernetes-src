@@ -59,9 +59,8 @@ type Store interface {
 	// GetByKey returns the accumulator associated with the given key
 	GetByKey(key string) (item interface{}, exists bool, err error)
 
-	// Replace will delete the contents of the store, using instead the
-	// given list. Store takes ownership of the list, you should not reference
-	// it after calling this function.
+	// Replace will delete the contents of the store, using instead the given list.
+	// Store takes ownership of the list, you should not reference it after calling this function.
 	Replace([]interface{}, string) error
 
 	// Resync is meaningless in the terms appearing here but has
@@ -109,9 +108,13 @@ func MetaNamespaceKeyFunc(obj interface{}) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("object has no meta: %v", err)
 	}
+
+	// 当object有namespace返回: namespace/name
 	if len(meta.GetNamespace()) > 0 {
 		return meta.GetNamespace() + "/" + meta.GetName(), nil
 	}
+
+	// 当object不存在namespace时,返回name
 	return meta.GetName(), nil
 }
 

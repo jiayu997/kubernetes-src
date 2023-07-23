@@ -55,40 +55,58 @@ type Reflector struct {
 	// stringification of expectedType otherwise. It is for display
 	// only, and should not be used for parsing or comparison.
 	expectedTypeName string
+
 	// An example object of the type we expect to place in the store.
 	// Only the type needs to be right, except that when that is
 	// `unstructured.Unstructured` the object's `"apiVersion"` and
 	// `"kind"` must also be right.
+	// 反射相关机制
 	expectedType reflect.Type
+
 	// The GVK of the object we expect to place in the store if unstructured.
 	expectedGVK *schema.GroupVersionKind
+
 	// The destination to sync up with the watch source
+	// 存储
 	store Store
+
 	// listerWatcher is used to perform lists and watches.
+	// 核心功能list和watch功能
 	listerWatcher ListerWatcher
 
 	// backoff manages backoff of ListWatch
 	backoffManager wait.BackoffManager
+
 	// initConnBackoffManager manages backoff the initial connection with the Watch call of ListAndWatch.
 	initConnBackoffManager wait.BackoffManager
 
+	// 重新同步时间
 	resyncPeriod time.Duration
+
+	// 是否周期性同步
 	// ShouldResync is invoked periodically and whenever it returns `true` the Store's Resync operation is invoked
 	ShouldResync func() bool
+
 	// clock allows tests to manipulate time
 	clock clock.Clock
+
 	// paginatedResult defines whether pagination should be forced for list calls.
 	// It is set based on the result of the initial list call.
+	// 分页操作
 	paginatedResult bool
+
 	// lastSyncResourceVersion is the resource version token last
 	// observed when doing a sync with the underlying store
 	// it is thread safe, but not synchronized with the underlying store
 	lastSyncResourceVersion string
+
 	// isLastSyncResourceVersionUnavailable is true if the previous list or watch request with
 	// lastSyncResourceVersion failed with an "expired" or "too large resource version" error.
 	isLastSyncResourceVersionUnavailable bool
+
 	// lastSyncResourceVersionMutex guards read/write access to lastSyncResourceVersion
 	lastSyncResourceVersionMutex sync.RWMutex
+
 	// WatchListPageSize is the requested chunk size of initial and resync watch lists.
 	// If unset, for consistent reads (RV="") or reads that opt-into arbitrarily old data
 	// (RV="0") it will default to pager.PageSize, for the rest (RV != "" && RV != "0")
@@ -97,6 +115,7 @@ type Reflector struct {
 	// etcd, which is significantly less efficient and may lead to serious performance and
 	// scalability problems.
 	WatchListPageSize int64
+
 	// Called whenever the ListAndWatch drops the connection with an error.
 	watchErrorHandler WatchErrorHandler
 }
@@ -163,7 +182,9 @@ func NewNamespaceKeyedIndexerAndReflector(lw ListerWatcher, expectedType interfa
 // "yes".  This enables you to use reflectors to periodically process
 // everything as well as incrementally processing the things that
 // change.
+
 func NewReflector(lw ListerWatcher, expectedType interface{}, store Store, resyncPeriod time.Duration) *Reflector {
+	// nameing.getnamefromcallsite = it returns back a shortpath/filename:line
 	return NewNamedReflector(naming.GetNameFromCallsite(internalPackages...), lw, expectedType, store, resyncPeriod)
 }
 
@@ -212,16 +233,18 @@ func (r *Reflector) setExpectedType(expectedType interface{}) {
 // call chains to NewReflector, so they'd be low entropy names for reflectors
 var internalPackages = []string{"client-go/tools/cache/"}
 
-// Run repeatedly uses the reflector's ListAndWatch to fetch all the
-// objects and subsequent deltas.
+// Run repeatedly uses the reflector's ListAndWatch to fetch all the  objects and subsequent deltas.
 // Run will exit when stopCh is closed.
 func (r *Reflector) Run(stopCh <-chan struct{}) {
 	klog.V(3).Infof("Starting reflector %s (%s) from %s", r.expectedTypeName, r.resyncPeriod, r.name)
+
+	// 这个函数在未收到stopCh信号之前，会无限执行ListAndWatch函数
 	wait.BackoffUntil(func() {
 		if err := r.ListAndWatch(stopCh); err != nil {
 			r.watchErrorHandler(r, err)
 		}
 	}, r.backoffManager, true, stopCh)
+
 	klog.V(3).Infof("Stopping reflector %s (%s) from %s", r.expectedTypeName, r.resyncPeriod, r.name)
 }
 
@@ -234,8 +257,7 @@ var (
 	errorStopRequested = errors.New("Stop requested")
 )
 
-// resyncChan returns a channel which will receive something when a resync is
-// required, and a cleanup function.
+// resyncChan returns a channel which will receive something when a resync is required, and a cleanup function.
 func (r *Reflector) resyncChan() (<-chan time.Time, func() bool) {
 	if r.resyncPeriod == 0 {
 		return neverExitWatch, func() bool { return false }
@@ -248,13 +270,13 @@ func (r *Reflector) resyncChan() (<-chan time.Time, func() bool) {
 	return t.C(), t.Stop
 }
 
-// ListAndWatch first lists all items and get the resource version at the moment of call,
-// and then use the resource version to watch.
+// ListAndWatch first lists all items and get the resource version at the moment of call and then use the resource version to watch.
 // It returns error if ListAndWatch didn't even try to initialize watch.
 func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 	klog.V(3).Infof("Listing and watching %v from %s", r.expectedTypeName, r.name)
 	var resourceVersion string
 
+	// first time last version = 0
 	options := metav1.ListOptions{ResourceVersion: r.relistResourceVersion()}
 
 	if err := func() error {
@@ -271,8 +293,8 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 					panicCh <- r
 				}
 			}()
-			// Attempt to gather list in chunks, if supported by listerWatcher, if not, the first
-			// list request will return the full response.
+			// Attempt to gather list in chunks, if supported by listerWatcher, if not, the first list request will return the full response.
+			// 这里是将deployment 的list操作封装到pager结构体里面去了
 			pager := pager.New(pager.SimplePageFunc(func(opts metav1.ListOptions) (runtime.Object, error) {
 				return r.listerWatcher.List(opts)
 			}))
@@ -298,7 +320,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 				// we don't introduce regression.
 				pager.PageSize = 0
 			}
-
+			// 这里是实际在执行: r.listerWatcher.List , 获取到list 返回
 			list, paginatedResult, err = pager.List(context.Background(), options)
 			if isExpiredError(err) || isTooLargeResourceVersionError(err) {
 				r.setIsLastSyncResourceVersionUnavailable(true)
@@ -312,6 +334,8 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 			}
 			close(listCh)
 		}()
+		// end go func
+
 		select {
 		case <-stopCh:
 			return nil
@@ -340,31 +364,45 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 		}
 
 		r.setIsLastSyncResourceVersionUnavailable(false) // list was successful
+
+		// 类型断言
 		listMetaInterface, err := meta.ListAccessor(list)
 		if err != nil {
 			return fmt.Errorf("unable to understand list result %#v: %v", list, err)
 		}
+		// 获取资源对象版本
 		resourceVersion = listMetaInterface.GetResourceVersion()
 		initTrace.Step("Resource version extracted")
+
+		// 获取到的list数据进行解析 object -> []runtime object list
 		items, err := meta.ExtractList(list)
 		if err != nil {
 			return fmt.Errorf("unable to understand list result %#v (%v)", list, err)
 		}
 		initTrace.Step("Objects extracted")
+
+		// object list <-> []runtime object
+		// put object into delta fifo
 		if err := r.syncWith(items, resourceVersion); err != nil {
 			return fmt.Errorf("unable to sync list result: %v", err)
 		}
 		initTrace.Step("SyncWith done")
+
+		// set last resource version
 		r.setLastSyncResourceVersion(resourceVersion)
 		initTrace.Step("Resource version updated")
+
 		return nil
 	}(); err != nil {
 		return err
 	}
+	// end the func
 
 	resyncerrc := make(chan error, 1)
 	cancelCh := make(chan struct{})
 	defer close(cancelCh)
+
+	// resync data
 	go func() {
 		resyncCh, cleanup := r.resyncChan()
 		defer func() {
@@ -380,6 +418,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 			}
 			if r.ShouldResync == nil || r.ShouldResync() {
 				klog.V(4).Infof("%s: forcing resync", r.name)
+				// 同步底层缓存
 				if err := r.store.Resync(); err != nil {
 					resyncerrc <- err
 					return
@@ -390,6 +429,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 		}
 	}()
 
+	// watch resource
 	for {
 		// give the stopCh a chance to stop the loop, even in case of continue statements further down on errors
 		select {
@@ -412,6 +452,10 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 
 		// start the clock before sending the request, since some proxies won't flush headers until after the first watch event is sent
 		start := r.clock.Now()
+
+		// 获取watch到的数据
+		// w.resultchan = {event,object}
+		// w = /Users/jiayu/Documents/go-dev/src/kubernetes-src/vendor/k8s.io/apimachinery/pkg/watch/streamwatcher.go = StreamWatcher
 		w, err := r.listerWatcher.Watch(options)
 		if err != nil {
 			// If this is "connection refused" error, it means that most likely apiserver is not responsive.
@@ -426,7 +470,9 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 			return err
 		}
 
+		// 分发watch 数据
 		if err := r.watchHandler(start, w, &resourceVersion, resyncerrc, stopCh); err != nil {
+			// error handle
 			if err != errorStopRequested {
 				switch {
 				case isExpiredError(err):
@@ -448,6 +494,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 }
 
 // syncWith replaces the store's items with the given list.
+// 实际组装是：一个deployment列表+deployment的资源版本
 func (r *Reflector) syncWith(items []runtime.Object, resourceVersion string) error {
 	found := make([]interface{}, 0, len(items))
 	for _, item := range items {
@@ -471,6 +518,8 @@ loop:
 			return errorStopRequested
 		case err := <-errc:
 			return err
+			// w.ResultChan get object and object event
+			// 获取watch中获取event了
 		case event, ok := <-w.ResultChan():
 			if !ok {
 				break loop
@@ -490,12 +539,18 @@ loop:
 					continue
 				}
 			}
+
+			// get object meta information
 			meta, err := meta.Accessor(event.Object)
 			if err != nil {
 				utilruntime.HandleError(fmt.Errorf("%s: unable to understand watch event %#v", r.name, event))
 				continue
 			}
+
 			newResourceVersion := meta.GetResourceVersion()
+
+			// distribute event type
+			// 基于不同的事件，将其放到底层缓存中去
 			switch event.Type {
 			case watch.Added:
 				err := r.store.Add(event.Object)
@@ -520,8 +575,10 @@ loop:
 			default:
 				utilruntime.HandleError(fmt.Errorf("%s: unable to understand watch event %#v", r.name, event))
 			}
+			// set newest resource version
 			*resourceVersion = newResourceVersion
 			r.setLastSyncResourceVersion(newResourceVersion)
+
 			if rvu, ok := r.store.(ResourceVersionUpdater); ok {
 				rvu.UpdateResourceVersion(newResourceVersion)
 			}
@@ -529,6 +586,7 @@ loop:
 		}
 	}
 
+	// 从event channel中获取事件失败后
 	watchDuration := r.clock.Since(start)
 	if watchDuration < 1*time.Second && eventCount == 0 {
 		return fmt.Errorf("very short watch: %s: Unexpected watch close - watch lasted less than a second and no items received", r.name)
@@ -564,6 +622,8 @@ func (r *Reflector) relistResourceVersion() string {
 		// Since this reflector makes paginated list requests, and all paginated list requests skip the watch cache
 		// if the lastSyncResourceVersion is unavailable, we set ResourceVersion="" and list again to re-establish reflector
 		// to the latest available ResourceVersion, using a consistent read from etcd.
+
+		// will sync from etcd again
 		return ""
 	}
 	if r.lastSyncResourceVersion == "" {

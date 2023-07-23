@@ -62,6 +62,7 @@ type Queue interface {
 	// return that (key, accumulator) association to the Queue as part
 	// of the atomic processing and (b) return the inner error from
 	// Pop.
+	// popProcessFunc 主要用于元素pop弹出后，由这个函数来处理
 	Pop(PopProcessFunc) (interface{}, error)
 
 	// AddIfNotPresent puts the given accumulator into the Queue (in
@@ -108,22 +109,30 @@ func Pop(queue Queue) interface{} {
 //   - You do not want to process deleted objects, they should be removed from the queue.
 //   - You do not want to periodically reprocess objects.
 //
+
 // Compare with DeltaFIFO for other use cases.
 type FIFO struct {
 	lock sync.RWMutex
 	cond sync.Cond
+
 	// We depend on the property that every key in `items` is also in `queue`
+	// string = 资源对象key,interface{} = object
+	// items = > {"busybox-1": object,"busybox-2": object}
 	items map[string]interface{}
+
+	// 队列，资源对象key
+	// queue -> ["busybox-1",busybox-2"]
 	queue []string
 
 	// populated is true if the first batch of items inserted by Replace() has been populated
 	// or Delete/Add/Update was called first.
 	populated bool
+
 	// initialPopulationCount is the number of items inserted by the first call of Replace()
 	initialPopulationCount int
 
-	// keyFunc is used to make the key used for queued item insertion and retrieval, and
-	// should be deterministic.
+	// keyFunc is used to make the key used for queued item insertion and retrieval, and should be deterministic.
+	// 使用object生成key
 	keyFunc KeyFunc
 
 	// Indication the queue is closed.
@@ -133,6 +142,7 @@ type FIFO struct {
 }
 
 var (
+	// 判断fifo是否为queue
 	_ = Queue(&FIFO{}) // FIFO is a Queue
 )
 
@@ -141,6 +151,7 @@ func (f *FIFO) Close() {
 	f.lock.Lock()
 	defer f.lock.Unlock()
 	f.closed = true
+	// 会唤醒睡眠的
 	f.cond.Broadcast()
 }
 
@@ -149,22 +160,33 @@ func (f *FIFO) Close() {
 func (f *FIFO) HasSynced() bool {
 	f.lock.Lock()
 	defer f.lock.Unlock()
+	// 当已获取 + 获取到的数量=0 时返回true
 	return f.populated && f.initialPopulationCount == 0
 }
 
 // Add inserts an item, and puts it in the queue. The item is only enqueued
 // if it doesn't already exist in the set.
+
+// add 实际上是包含了更新逻辑
 func (f *FIFO) Add(obj interface{}) error {
+	// 基于obj计算出key
 	id, err := f.keyFunc(obj)
 	if err != nil {
 		return KeyError{obj, err}
 	}
+
 	f.lock.Lock()
 	defer f.lock.Unlock()
+
+	// 设置为true
 	f.populated = true
+
+	// 基于map判断这个key是否存在
 	if _, exists := f.items[id]; !exists {
+		// 将key添加到queue中
 		f.queue = append(f.queue, id)
 	}
+	// 基于key 更新obj
 	f.items[id] = obj
 	f.cond.Broadcast()
 	return nil
@@ -183,6 +205,8 @@ func (f *FIFO) AddIfNotPresent(obj interface{}) error {
 	}
 	f.lock.Lock()
 	defer f.lock.Unlock()
+
+	// 仅当items中queue[key] 不存在时，才添加
 	f.addIfNotPresent(id, obj)
 	return nil
 }
@@ -191,10 +215,11 @@ func (f *FIFO) AddIfNotPresent(obj interface{}) error {
 // item to the queue under id if it does not already exist.
 func (f *FIFO) addIfNotPresent(id string, obj interface{}) {
 	f.populated = true
+	// 如果已经存在就返回了
 	if _, exists := f.items[id]; exists {
 		return
 	}
-
+	// 添加queue和更新items
 	f.queue = append(f.queue, id)
 	f.items[id] = obj
 	f.cond.Broadcast()
@@ -216,11 +241,13 @@ func (f *FIFO) Delete(obj interface{}) error {
 	f.lock.Lock()
 	defer f.lock.Unlock()
 	f.populated = true
+	// 删除items 中 id的元素，此时queue还是存在这个key的，并没有删除,所以我们看他判断是否存在时的逻辑都是判断items的
 	delete(f.items, id)
 	return err
 }
 
 // List returns a list of all the items.
+// 返回items 列表
 func (f *FIFO) List() []interface{} {
 	f.lock.RLock()
 	defer f.lock.RUnlock()
@@ -233,6 +260,7 @@ func (f *FIFO) List() []interface{} {
 
 // ListKeys returns a list of all the keys of the objects currently
 // in the FIFO.
+// 返回所有的key切片
 func (f *FIFO) ListKeys() []string {
 	f.lock.RLock()
 	defer f.lock.RUnlock()
@@ -277,6 +305,7 @@ func (f *FIFO) Pop(process PopProcessFunc) (interface{}, error) {
 	f.lock.Lock()
 	defer f.lock.Unlock()
 	for {
+		// 当queue长度为0的时候，会一直阻塞
 		for len(f.queue) == 0 {
 			// When the queue is empty, invocation of Pop() is blocked until new item is enqueued.
 			// When Close() is called, the f.closed is set and the condition is broadcasted.
@@ -284,25 +313,32 @@ func (f *FIFO) Pop(process PopProcessFunc) (interface{}, error) {
 			if f.closed {
 				return nil, ErrFIFOClosed
 			}
-
+			// 只有Add和AddIfNotPresent 才会唤醒这里
 			f.cond.Wait()
 		}
+		// 0 是最先加入的元素
 		id := f.queue[0]
+		// 将queue长度缩小，相当于取出一个元素了
 		f.queue = f.queue[1:]
 		if f.initialPopulationCount > 0 {
 			f.initialPopulationCount--
 		}
+		// 当items中不存在这个元素时，此时会一直循环下去，知道这个items被添加进来
 		item, ok := f.items[id]
 		if !ok {
 			// Item may have been deleted subsequently.
 			continue
 		}
+		// 取出item[id]这个元素
 		delete(f.items, id)
+
+		// 执行pop之后的，用户自定义处理函数，把这个obj传递进去了
 		err := process(item)
 		if e, ok := err.(ErrRequeue); ok {
 			f.addIfNotPresent(id, item)
 			err = e.Err
 		}
+
 		return item, err
 	}
 }
@@ -312,7 +348,9 @@ func (f *FIFO) Pop(process PopProcessFunc) (interface{}, error) {
 // after calling this function. f's queue is reset, too; upon return, it
 // will contain the items in the map, in no particular order.
 func (f *FIFO) Replace(list []interface{}, resourceVersion string) error {
+	// 基于replace传递过来的 list切片，重新构建一个新的items
 	items := make(map[string]interface{}, len(list))
+	// 计算传递过来的list key
 	for _, item := range list {
 		key, err := f.keyFunc(item)
 		if err != nil {
@@ -324,16 +362,22 @@ func (f *FIFO) Replace(list []interface{}, resourceVersion string) error {
 	f.lock.Lock()
 	defer f.lock.Unlock()
 
+	// 当没有操作时
 	if !f.populated {
 		f.populated = true
 		f.initialPopulationCount = len(items)
 	}
 
+	// 更新items
 	f.items = items
+
+	// 切片截取,相当于清空当前的slice了
 	f.queue = f.queue[:0]
+	// 基于这次传递过来的list，更新queue
 	for id := range items {
 		f.queue = append(f.queue, id)
 	}
+	// 只有当queue长度大于>0时，才能唤醒其他进程去处理
 	if len(f.queue) > 0 {
 		f.cond.Broadcast()
 	}
@@ -346,11 +390,14 @@ func (f *FIFO) Resync() error {
 	f.lock.Lock()
 	defer f.lock.Unlock()
 
+	// 构建一个sets
 	inQueue := sets.NewString()
 	for _, id := range f.queue {
 		inQueue.Insert(id)
 	}
+
 	for id := range f.items {
+		// 当queue中少key时，将items中的key添加到queue中
 		if !inQueue.Has(id) {
 			f.queue = append(f.queue, id)
 		}

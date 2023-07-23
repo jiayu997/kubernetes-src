@@ -89,6 +89,7 @@ func (p *ListPager) List(ctx context.Context, options metav1.ListOptions) (runti
 		default:
 		}
 
+		// 实际list操作,比如deployment的list，这里实际上获取到了list结果
 		obj, err := p.PageFn(ctx, options)
 		if err != nil {
 			// Only fallback to full list if an "Expired" errors is returned, FullListIfExpired is true, and
@@ -107,6 +108,7 @@ func (p *ListPager) List(ctx context.Context, options metav1.ListOptions) (runti
 			result, err := p.PageFn(ctx, options)
 			return result, paginatedResult, err
 		}
+
 		m, err := meta.ListAccessor(obj)
 		if err != nil {
 			return nil, paginatedResult, fmt.Errorf("returned object must be a list: %v", err)
