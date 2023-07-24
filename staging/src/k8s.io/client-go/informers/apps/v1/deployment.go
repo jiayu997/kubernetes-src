@@ -39,6 +39,7 @@ type DeploymentInformer interface {
 	Lister() v1.DeploymentLister
 }
 
+// kubernetes上的每一个资源都实现了Informer机制，每一个Informer上都会实现Informer和Lister方法，
 type deploymentInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
 	tweakListOptions internalinterfaces.TweakListOptionsFunc

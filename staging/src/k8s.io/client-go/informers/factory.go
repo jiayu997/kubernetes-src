@@ -52,6 +52,9 @@ import (
 // SharedInformerOption defines the functional option type for SharedInformerFactory.
 type SharedInformerOption func(*sharedInformerFactory) *sharedInformerFactory
 
+// Informer也被称为Shared Informer，它是可以共享使用的。若同一资源的Informer被实例化了多次，
+// 每个Informer使用一个Reflector，那么会运行过多的相同ListAndWatch ，太多重复的序列化和反序列化操作会导致api-server负载过重
+// Shared Informer可以使同一个资源对象共享一个Reflector，这样可以节约很多资源；Shared Infor定义了一个map数据结构，通过map数据结构实现共享Informer机制。
 type sharedInformerFactory struct {
 	client           kubernetes.Interface
 	namespace        string
@@ -60,7 +63,9 @@ type sharedInformerFactory struct {
 	defaultResync    time.Duration
 	customResync     map[reflect.Type]time.Duration
 
+	// reflect.Type = 具体某个资源类型
 	informers map[reflect.Type]cache.SharedIndexInformer
+
 	// startedInformers is used for tracking which informers have been started.
 	// This allows Start() to be called multiple times safely.
 	startedInformers map[reflect.Type]bool
@@ -93,6 +98,28 @@ func WithNamespace(namespace string) SharedInformerOption {
 }
 
 // NewSharedInformerFactory constructs a new instance of sharedInformerFactory for all namespaces.
+// 初始化 informer factory
+// 		informerFactory := informers.NewSharedInformerFactory(clientset, time.Second*30)
+// 对 Deployment 监听 :
+// 		deployInformer := informerFactory.Apps().V1().Deployments()
+// 创建 Informer（相当于注册到工厂中去，这样下面启动的时候就会去 List & Watch 对应的资源）
+// 		informer := deployInformer.Informer()
+// 创建 Lister
+//		deployLister := deployInformer.Lister()
+// 注册事件处理程序
+//		informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+//		AddFunc:    onAdd,  // onAdd(obj interface{})
+//		UpdateFunc: onUpdate, // onUpdate(old, new interface{})
+//		DeleteFunc: onDelete, // onDelete(obj interface{})
+//		})
+//		stopper := make(chan struct{})
+//		defer close(stopper)
+// 启动 informer，List & Watch
+//		informerFactory.Start(stopper)
+// 等待所有启动的 Informer 的缓存被同步
+//		informerFactory.WaitForCacheSync(stopper)
+// 从本地缓存中获取 default 中的所有 deployment 列表
+//		deployments, err := deployLister.Deployments("default").List(labels.Everything())
 func NewSharedInformerFactory(client kubernetes.Interface, defaultResync time.Duration) SharedInformerFactory {
 	return NewSharedInformerFactoryWithOptions(client, defaultResync)
 }
@@ -107,6 +134,7 @@ func NewFilteredSharedInformerFactory(client kubernetes.Interface, defaultResync
 
 // NewSharedInformerFactoryWithOptions constructs a new instance of a SharedInformerFactory with additional options.
 func NewSharedInformerFactoryWithOptions(client kubernetes.Interface, defaultResync time.Duration, options ...SharedInformerOption) SharedInformerFactory {
+	// 创建了一个informer工厂,实际上这个工厂是所有的资源共用的
 	factory := &sharedInformerFactory{
 		client:           client,
 		namespace:        v1.NamespaceAll,
@@ -217,7 +245,9 @@ func (f *sharedInformerFactory) Internal() apiserverinternal.Interface {
 	return apiserverinternal.New(f, f.namespace, f.tweakListOptions)
 }
 
+// 	deployInformer := informerFactory.Apps().V1().Deployments()
 func (f *sharedInformerFactory) Apps() apps.Interface {
+	// f.namespace 默认为v1.NamespaceAll = ""
 	return apps.New(f, f.namespace, f.tweakListOptions)
 }
 

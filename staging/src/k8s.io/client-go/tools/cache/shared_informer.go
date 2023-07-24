@@ -134,7 +134,9 @@ type SharedInformer interface {
 	// AddEventHandler adds an event handler to the shared informer using the shared informer's resync
 	// period.  Events to a single handler are delivered sequentially, but there is no coordination
 	// between different handlers.
+	// 添加资源事件处理器，当有资源变化时就会通过回调通知使用者
 	AddEventHandler(handler ResourceEventHandler)
+
 	// AddEventHandlerWithResyncPeriod adds an event handler to the
 	// shared informer with the requested resync period; zero means
 	// this handler does not care about resyncs.  The resync operation
@@ -149,18 +151,30 @@ type SharedInformer interface {
 	// between any two resyncs may be longer than the nominal period
 	// because the implementation takes time to do work and there may
 	// be competing load and scheduling noise.
+	// // 需要周期同步的资源事件处理器
 	AddEventHandlerWithResyncPeriod(handler ResourceEventHandler, resyncPeriod time.Duration)
+
 	// GetStore returns the informer's local cache as a Store.
+	// 获取一个 Store 对象，前面我们讲解了很多实现 Store 的结构
 	GetStore() Store
+
 	// GetController is deprecated, it does nothing useful
+	// 主要Deltas/ListWatch/Reflector整合起来
+	// 获取一个 Controller，下面会详细介绍，主要是用来将 Reflector 和 DeltaFIFO 组合到一起工作
 	GetController() Controller
+
 	// Run starts and runs the shared informer, returning after it stops.
 	// The informer will be stopped when stopCh is closed.
+	// SharedInformer 的核心实现，启动并运行这个 SharedInformer
+	// 当 stopCh 关闭时候，informer 才会退出
 	Run(stopCh <-chan struct{})
+
 	// HasSynced returns true if the shared informer's store has been
 	// informed by at least one full LIST of the authoritative state
 	// of the informer's object collection.  This is unrelated to "resync".
+	// 告诉使用者全量的对象是否已经同步到了本地存储中
 	HasSynced() bool
+
 	// LastSyncResourceVersion is the resource version observed when last synced with the underlying
 	// store. The value returned is not synchronized with access to the underlying store and is not
 	// thread-safe.
@@ -183,10 +197,14 @@ type SharedInformer interface {
 }
 
 // SharedIndexInformer provides add and get Indexers ability based on SharedInformer.
+// NewSharedIndexInformer 和 NewSharedInformer 的区别就是SharedIndexInformer可以添加Indexer
 type SharedIndexInformer interface {
 	SharedInformer
+
 	// AddIndexers add indexers to the informer before it starts.
+	// 在启动之前添加 indexers 到 informer 中
 	AddIndexers(indexers Indexers) error
+
 	GetIndexer() Indexer
 }
 
@@ -207,8 +225,14 @@ func NewSharedInformer(lw ListerWatcher, exampleObject runtime.Object, defaultEv
 // requested before the informer starts and the
 // defaultEventHandlerResyncPeriod given here and (b) the constant
 // `minimumResyncPeriod` defined in this file.
+
+// 实例化shareindexinformer
+// 这里主要是：staging/src/k8s.io/client-go/informers/apps/v1/deployment.go这里面的初始化的时候在调用,因为shareindexinfor是所有资源通用的
+// lw = 实例化 pod 类型的 list watcher 对象: cache.NewListWatchFromClient(clientset.CoreV1().RESTClient(), "pods", v1.NamespaceDefault, fields.Everything())
+// exampleObject  = &v1.pod{}
 func NewSharedIndexInformer(lw ListerWatcher, exampleObject runtime.Object, defaultEventHandlerResyncPeriod time.Duration, indexers Indexers) SharedIndexInformer {
 	realClock := &clock.RealClock{}
+	// shareIndexInformer 实现了ShareIndexInformer
 	sharedIndexInformer := &sharedIndexInformer{
 		processor:                       &sharedProcessor{clock: realClock},
 		indexer:                         NewIndexer(DeletionHandlingMetaNamespaceKeyFunc, indexers),
@@ -285,30 +309,45 @@ func WaitForCacheSync(stopCh <-chan struct{}, cacheSyncs ...InformerSynced) bool
 // sharedProcessor, which is responsible for relaying those
 // notifications to each of the informer's clients.
 type sharedIndexInformer struct {
-	indexer    Indexer
+	// 本地的存储
+	indexer Indexer
+
+	// 这个controller 里面包含了Reflector,也就是包含了Delta FIFO
+	// 在 Controller 中将 Reflector 和 DeltaFIFO 关联了起来
 	controller Controller
 
-	processor             *sharedProcessor
+	// 事件处理器, informer.AddEventHandler注册就是这里
+	// 对 ResourceEventHandler 进行了一层层封装，统一由 sharedProcessor 管理
+	processor *sharedProcessor
+
+	// 主要用于检测对象是否发生变化
 	cacheMutationDetector MutationDetector
 
+	// 用于 Reflector 中真正执行 ListAndWatch 的操作
 	listerWatcher ListerWatcher
 
 	// objectType is an example object of the type this informer is
 	// expected to handle.  Only the type needs to be right, except
 	// that when that is `unstructured.Unstructured` the object's
 	// `"apiVersion"` and `"kind"` must also be right.
+	// informer 中要处理的对象
 	objectType runtime.Object
 
 	// resyncCheckPeriod is how often we want the reflector's resync timer to fire so it can call
 	// shouldResync to check if any of our listeners need a resync.
+	// 重新同步周期
 	resyncCheckPeriod time.Duration
+
 	// defaultEventHandlerResyncPeriod is the default resync period for any handlers added via
 	// AddEventHandler (i.e. they don't specify one and just want to use the shared informer's default
 	// value).
+	// 定期同步周期
 	defaultEventHandlerResyncPeriod time.Duration
+
 	// clock allows for testability
 	clock clock.Clock
 
+	// 启动、停止标记
 	started, stopped bool
 	startedLock      sync.Mutex
 
@@ -372,19 +411,24 @@ func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) {
 		klog.Warningf("The sharedIndexInformer has started, run more than once is not allowed")
 		return
 	}
+	// 初始化Delta FIFO
 	fifo := NewDeltaFIFOWithOptions(DeltaFIFOOptions{
+		// 本地缓存indexer
 		KnownObjects:          s.indexer,
 		EmitDeltaTypeReplaced: true,
+		// 如果这里初始化的时候没有指定，会使用默认的计算方式: namespace/name | name
+		// KeyFunction:
 	})
 
 	cfg := &Config{
-		Queue:            fifo,
+		Queue:            fifo, // Delta FIFO
 		ListerWatcher:    s.listerWatcher,
 		ObjectType:       s.objectType,
 		FullResyncPeriod: s.resyncCheckPeriod,
 		RetryOnError:     false,
 		ShouldResync:     s.processor.shouldResync,
 
+		// 这里主要是数据从Pop里面弹出后，要执行这个操作
 		Process:           s.HandleDeltas,
 		WatchErrorHandler: s.watchErrorHandler,
 	}
@@ -393,6 +437,7 @@ func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) {
 		s.startedLock.Lock()
 		defer s.startedLock.Unlock()
 
+		// 构建一个Controller
 		s.controller = New(cfg)
 		s.controller.(*controller).clock = s.clock
 		s.started = true
@@ -403,6 +448,7 @@ func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) {
 	var wg wait.Group
 	defer wg.Wait()              // Wait for Processor to stop
 	defer close(processorStopCh) // Tell Processor to stop
+
 	wg.StartWithChannel(processorStopCh, s.cacheMutationDetector.Run)
 	wg.StartWithChannel(processorStopCh, s.processor.run)
 
@@ -411,6 +457,8 @@ func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) {
 		defer s.startedLock.Unlock()
 		s.stopped = true // Don't want any new listeners
 	}()
+
+	// 启动controller
 	s.controller.Run(stopCh)
 }
 
@@ -563,14 +611,16 @@ func (s *sharedIndexInformer) HandleDeltas(obj interface{}) error {
 						}
 					}
 				}
+				// 事件的分发
 				s.processor.distribute(updateNotification{oldObj: old, newObj: d.Object}, isSync)
-			} else {
+			} else { // 本地缓存不存在
 				if err := s.indexer.Add(d.Object); err != nil {
 					return err
 				}
 				s.processor.distribute(addNotification{newObj: d.Object}, false)
 			}
 		case Deleted:
+			// 从本地缓存删除这个object
 			if err := s.indexer.Delete(d.Object); err != nil {
 				return err
 			}
@@ -589,6 +639,8 @@ func (s *sharedIndexInformer) HandleDeltas(obj interface{}) error {
 type sharedProcessor struct {
 	listenersStarted bool
 	listenersLock    sync.RWMutex
+
+	// 事件处理器集合
 	listeners        []*processorListener
 	syncingListeners []*processorListener
 	clock            clock.Clock

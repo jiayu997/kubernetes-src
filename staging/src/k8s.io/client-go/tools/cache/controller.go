@@ -40,27 +40,33 @@ type Config struct {
 	// The queue for your objects - has to be a DeltaFIFO due to
 	// assumptions in the implementation. Your Process() function
 	// should accept the output of this Queue's Pop() method.
+	// 资源对象的队列，其实就是一个 DeltaFIFO
 	Queue
 
 	// Something that can list and watch your objects.
+	// 用来构造 Reflector 的
 	ListerWatcher
 
 	// Something that can process a popped Deltas.
+	// Delta FIFO Pop出来后，执行这个Process函数
 	Process ProcessFunc
 
 	// ObjectType is an example object of the type this controller is
 	// expected to handle.  Only the type needs to be right, except
 	// that when that is `unstructured.Unstructured` the object's
 	// `"apiVersion"` and `"kind"` must also be right.
+	// 对象类型，也就是 Reflector 中使用的
 	ObjectType runtime.Object
 
 	// FullResyncPeriod is the period at which ShouldResync is considered.
+	// 全量同步周期，在 Reflector 中使用
 	FullResyncPeriod time.Duration
 
 	// ShouldResync is periodically used by the reflector to determine
 	// whether to Resync the Queue. If ShouldResync is `nil` or
 	// returns true, it means the reflector should proceed with the
 	// resync.
+	// Reflector 中是否需要 Resync 操作
 	ShouldResync ShouldResyncFunc
 
 	// If true, when Process() returns an error, re-enqueue the object.
@@ -68,12 +74,15 @@ type Config struct {
 	//       the object completely if desired. Pass the object in
 	//       question to this interface as a parameter.  This is probably moot
 	//       now that this functionality appears at a higher level.
+	// 出现错误是否需要重试
 	RetryOnError bool
 
 	// Called whenever the ListAndWatch drops the connection with an error.
+	// Watch 返回 err 的回调函数
 	WatchErrorHandler WatchErrorHandler
 
 	// WatchListPageSize is the requested chunk size of initial and relist watch lists.
+	// Watch 分页大小
 	WatchListPageSize int64
 }
 
@@ -102,9 +111,13 @@ type Controller interface {
 	// on that Queue.  The other is to repeatedly Pop from the Queue
 	// and process with the Config's ProcessFunc.  Both of these
 	// continue until `stopCh` is closed.
+	// Run 函数主要做两件事，一件是构造并运行一个 Reflector 反射器，将对象/通知从 Config 的
+	// ListerWatcher 送到 Config 的 Queue 队列，并在该队列上调用 Resync 操作
+	// 另外一件事就是不断从队列中弹出对象，并使用 Config 的 ProcessFunc 进行处理
 	Run(stopCh <-chan struct{})
 
 	// HasSynced delegates to the Config's Queue
+	// APIServer 中的资源对象是否同步到了 Store 中
 	HasSynced() bool
 
 	// LastSyncResourceVersion delegates to the Reflector when there
@@ -124,33 +137,49 @@ func New(c *Config) Controller {
 // Run begins processing items, and will continue until a value is sent down stopCh or it is closed.
 // It's an error to call Run more than once.
 // Run blocks; call via go.
+// indexer, informer := cache.NewIndexerInformer
+// 调用 informer.Run() 其实是调用 controller.Run() 方法,简单说就是 Run() 内部会实例化 reflector 反射器对象, 并启动 reflector 的 List / Watch 监听 apiserver 事件.
+// 当拿到 apiserver 的数据事件时, 把数据推到 deltaFIFO 队列中
 func (c *controller) Run(stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
 	go func() {
 		<-stopCh
+		// 关闭Delta FIFO
 		c.config.Queue.Close()
 	}()
 	r := NewReflector(
+		// 从config中取出list/watch
+		// 主要是由：/Users/jiayu/Documents/go-dev/src/kubernetes-src/staging/src/k8s.io/client-go/kubernetes/typed/apps/v1/deployment.go 实现的
 		c.config.ListerWatcher,
+		// 从config取出对象
 		c.config.ObjectType,
-		c.config.Queue,
+		// 从config中取出Delta FIFO
+		c.config.Queue, // Delta FIFO
+		// 从Config中取出全量同步周期
 		c.config.FullResyncPeriod,
 	)
+	// 从config中获取是否需要重新同步
 	r.ShouldResync = c.config.ShouldResync
+	// 从config中获取分页大小
 	r.WatchListPageSize = c.config.WatchListPageSize
 	r.clock = c.clock
+
+	// 当初始化的时候，设置了watch出错函数时就配置
 	if c.config.WatchErrorHandler != nil {
 		r.watchErrorHandler = c.config.WatchErrorHandler
 	}
 
 	c.reflectorMutex.Lock()
+	// 初始化controller的reflector
 	c.reflector = r
 	c.reflectorMutex.Unlock()
 
 	var wg wait.Group
 
+	// 这里启动reflector,启动后reflector会根据ListerWatcher来watch对应的资源(理论上不会watch其他的资源),然后将数据放入Delta FIFO
 	wg.StartWithChannel(stopCh, r.Run)
 
+	// processLoop 的逻辑是不断从 deltaQueue 里消费事件, 然后 deltaQueue 内部每次 pop 完之前会调用传入的 process 方法. 该方法是由 processDeltas 来实现的
 	wait.Until(c.processLoop, time.Second, stopCh)
 	wg.Wait()
 }
@@ -178,8 +207,13 @@ func (c *controller) LastSyncResourceVersion() string {
 // actually exit when the controller is stopped. Or just give up on this stuff
 // ever being stoppable. Converting this whole package to use Context would
 // also be helpful.
+
+// 从Delta FIFO从循环Pop出数据
+// processLoop 的逻辑是不断从 deltaQueue 里消费事件, 然后 deltaQueue 内部每次 pop 完之前会调用传入的 process 方法. 该方法是由 processDeltas 来实现的
 func (c *controller) processLoop() {
 	for {
+		// c.config.Queue.Pop 就是Delta FIFO中的Pop
+		// c.config.Process是在: k8s.io/client-go/tools/cache/shared_informer.go的Run被初始化的
 		obj, err := c.config.Queue.Pop(PopProcessFunc(c.config.Process))
 		if err != nil {
 			if err == ErrFIFOClosed {
@@ -210,8 +244,11 @@ func (c *controller) processLoop() {
 //     happen if the watch is closed and misses the delete event and we don't
 //     notice the deletion until the subsequent re-list.
 type ResourceEventHandler interface {
+	// 添加对象回调函数
 	OnAdd(obj interface{})
+	// 更新对象回调函数
 	OnUpdate(oldObj, newObj interface{})
+	// 删除对象回调函数
 	OnDelete(obj interface{})
 }
 
@@ -312,6 +349,10 @@ func DeletionHandlingMetaNamespaceKeyFunc(obj interface{}) (string, error) {
 //     long as possible (until the upstream source closes the watch or times out,
 //     or you stop the controller).
 //   - h is the object you want notifications sent to.
+
+// Share Informer 和 Informer 的主要区别就是可以添加多个 EventHandler
+// 这里的Informer事件处理器，无法动态增加
+// 这里主要是单informer,内部依赖 controller 实现 informer 的功能
 func NewInformer(
 	lw ListerWatcher,
 	objType runtime.Object,
@@ -319,6 +360,7 @@ func NewInformer(
 	h ResourceEventHandler,
 ) (Store, Controller) {
 	// This will hold the client state, as we know it.
+	// 这里创建的缓存不带索引功能，仅存储数据
 	clientState := NewStore(DeletionHandlingMetaNamespaceKeyFunc)
 
 	return clientState, newInformer(lw, objType, resyncPeriod, h, clientState, nil)
@@ -339,6 +381,12 @@ func NewInformer(
 //     or you stop the controller).
 //   - h is the object you want notifications sent to.
 //   - indexers is the indexer for the received object type.
+
+// Share Informer 和 Informer 的主要区别就是可以添加多个 EventHandler
+// 这里的Informer事件处理器，无法动态增加
+// 这里主要是单informer,内部依赖 controller 实现 informer 的功能
+// 单单由 NewIndexerInformer 创建的 informer 的实现是比较简单的, 它的内部依赖 controller 实现 informer 的功能.
+// controller 又会关联 reflector, deltaFIFO, Store (indexer, threadSafeMap ) 组件之间的协调联动.
 func NewIndexerInformer(
 	lw ListerWatcher,
 	objType runtime.Object,
@@ -428,11 +476,13 @@ func newInformer(
 	// This will hold incoming changes. Note how we pass clientState in as a
 	// KeyLister, that way resync operations will result in the correct set
 	// of update/delete deltas.
+	// 实例化 DeltaFIFO 增量队列
 	fifo := NewDeltaFIFOWithOptions(DeltaFIFOOptions{
 		KnownObjects:          clientState,
 		EmitDeltaTypeReplaced: true,
 	})
 
+	// 创建 config 集合对象, 内置 fifo, listerwatcher, process 对象
 	cfg := &Config{
 		Queue:            fifo,
 		ListerWatcher:    lw,
@@ -475,5 +525,6 @@ func newInformer(
 			return nil
 		},
 	}
+	// 实例化 controller 对象, 注意 newinformer 返回的是 controller 方法
 	return New(cfg)
 }

@@ -72,6 +72,7 @@ type Reflector struct {
 
 	// listerWatcher is used to perform lists and watches.
 	// 核心功能list和watch功能
+	// 主要是由：/Users/jiayu/Documents/go-dev/src/kubernetes-src/staging/src/k8s.io/client-go/kubernetes/typed/apps/v1/deployment.go 实现的
 	listerWatcher ListerWatcher
 
 	// backoff manages backoff of ListWatch
@@ -382,7 +383,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 		initTrace.Step("Objects extracted")
 
 		// object list <-> []runtime object
-		// put object into delta fifo
+		// put object into delta fifo,同时会默认将even_type设置为sync或者replace
 		if err := r.syncWith(items, resourceVersion); err != nil {
 			return fmt.Errorf("unable to sync list result: %v", err)
 		}
@@ -418,7 +419,8 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 			}
 			if r.ShouldResync == nil || r.ShouldResync() {
 				klog.V(4).Infof("%s: forcing resync", r.name)
-				// 同步底层缓存
+				// 这里是向本地的indexers同步数据
+				// 默认会将event_type设置为sync
 				if err := r.store.Resync(); err != nil {
 					resyncerrc <- err
 					return
@@ -456,6 +458,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 		// 获取watch到的数据
 		// w.resultchan = {event,object}
 		// w = /Users/jiayu/Documents/go-dev/src/kubernetes-src/vendor/k8s.io/apimachinery/pkg/watch/streamwatcher.go = StreamWatcher
+		// watch过来的数据是包含event_type的
 		w, err := r.listerWatcher.Watch(options)
 		if err != nil {
 			// If this is "connection refused" error, it means that most likely apiserver is not responsive.
@@ -500,6 +503,7 @@ func (r *Reflector) syncWith(items []runtime.Object, resourceVersion string) err
 	for _, item := range items {
 		found = append(found, item)
 	}
+	// 将reflector 获取到[]object放入Delta FIFO,同时event_type会设置为sync或者replace
 	return r.store.Replace(found, resourceVersion)
 }
 
@@ -519,7 +523,7 @@ loop:
 		case err := <-errc:
 			return err
 			// w.ResultChan get object and object event
-			// 获取watch中获取event了
+			// 获取watch中获取event了,这里进行了一些错误处理判断
 		case event, ok := <-w.ResultChan():
 			if !ok {
 				break loop
@@ -546,11 +550,12 @@ loop:
 				utilruntime.HandleError(fmt.Errorf("%s: unable to understand watch event %#v", r.name, event))
 				continue
 			}
-
+			
+			// 获取到某个资源的资源版本号
 			newResourceVersion := meta.GetResourceVersion()
 
 			// distribute event type
-			// 基于不同的事件，将其放到底层缓存中去
+			// 基于不同的事件，将其放到底层缓存中去,event_type是基于不同的函数去标识的，Delta FIFO的 Add/Update/Delete有做了默认的区分
 			switch event.Type {
 			case watch.Added:
 				err := r.store.Add(event.Object)

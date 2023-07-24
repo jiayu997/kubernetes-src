@@ -96,6 +96,7 @@ type DeltaFIFOOptions struct {
 // different versions of the same object.
 
 // DeltaFIFO是K8s中用来存储处理数据的Queue，相较于传统的FIFO,它不仅仅存储了数据保证了先进先出，而且存储有K8s 资源对象的类型。其是连接Reflector(生产者)和indexer(消费者)的重要通道
+// DeltaFIFO 实现了Store和Queue
 type DeltaFIFO struct {
 	// lock/cond protects access to 'items' and 'queue'.
 	lock sync.RWMutex
