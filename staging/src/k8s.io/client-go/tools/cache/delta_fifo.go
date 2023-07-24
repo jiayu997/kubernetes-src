@@ -324,7 +324,7 @@ func (f *DeltaFIFO) Delete(obj interface{}) error {
 	f.lock.Lock()
 	defer f.lock.Unlock()
 	f.populated = true
-	// 如果indexer 没有数据
+	// 如果indexer没有数据(本地缓存还没有初始化)
 	if f.knownObjects == nil {
 		// 如果items中也没有数据则不需要删除
 		if _, exists := f.items[id]; !exists {
@@ -339,6 +339,7 @@ func (f *DeltaFIFO) Delete(obj interface{}) error {
 		// because it will be deduped automatically in "queueActionLocked"
 
 		// 判断indexer中是否有个这个元素
+		// GetByKey = 从threadSafeMap的items从看是否存在这个object(即从本地缓存中找看是否存在这个object)
 		_, exists, err := f.knownObjects.GetByKey(id)
 
 		// 判断items中是否有这个元素
@@ -354,6 +355,7 @@ func (f *DeltaFIFO) Delete(obj interface{}) error {
 	// exist in items and/or KnownObjects
 	// 当items或者indexer中存在这个元素时，进行加入
 	// 这个Delete等会在Pop时，同步到本地缓存indexer中,因为indexer中的数据实际上还是来自Delta FIFO(Pop获取到的这个元素)
+	// 当Delta FIFO存在时 删除，或者当indexers中存在时，Delta FIFO需要删除(到时候Pop后,indexers也会删除)
 	return f.queueActionLocked(Deleted, obj)
 }
 

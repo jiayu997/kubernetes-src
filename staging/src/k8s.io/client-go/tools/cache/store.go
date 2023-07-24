@@ -137,8 +137,9 @@ func SplitMetaNamespaceKey(key string) (namespace, name string, err error) {
 	return "", "", fmt.Errorf("unexpected key format: %q", key)
 }
 
-// `*cache` implements Indexer in terms of a ThreadSafeStore and an
-// associated KeyFunc.
+// `*cache` implements Indexer in terms of a ThreadSafeStore and an associated KeyFunc.
+// cache 实现了Indexer
+// cache 这个结构体只包含了keyFunc和cacheStorage，所以indexer实际的实现还是由cacheStorage来实现的
 type cache struct {
 	// cacheStorage bears the burden of thread safety for the cache
 	cacheStorage ThreadSafeStore
@@ -147,6 +148,7 @@ type cache struct {
 	keyFunc KeyFunc
 }
 
+// cache实现了store
 var _ Store = &cache{}
 
 // Add inserts an item into the cache.

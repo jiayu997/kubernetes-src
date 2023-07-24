@@ -33,20 +33,26 @@ import (
 //  3. an "indexed value", which is produced by an IndexFunc and
 //     can be a field value or any other string computed from the object.
 type Indexer interface {
+	// 在原本的存储的基础上，增加了索引功能
 	Store
+
 	// Index returns the stored objects whose set of indexed values
 	// intersects the set of indexed values of the given object, for
 	// the named index
 	Index(indexName string, obj interface{}) ([]interface{}, error)
+
 	// IndexKeys returns the storage keys of the stored objects whose
 	// set of indexed values for the named index includes the given
 	// indexed value
 	IndexKeys(indexName, indexedValue string) ([]string, error)
+
 	// ListIndexFuncValues returns all the indexed values of the given index
 	ListIndexFuncValues(indexName string) []string
+
 	// ByIndex returns the stored objects whose set of indexed values
 	// for the named index includes the given indexed value
 	ByIndex(indexName, indexedValue string) ([]interface{}, error)
+
 	// GetIndexer return the indexers
 	GetIndexers() Indexers
 
@@ -56,6 +62,8 @@ type Indexer interface {
 }
 
 // IndexFunc knows how to compute the set of indexed values for an object.
+// IndexFunc 可以基于ojb生成一个索引健列表
+// 索引器函数，用于计算一个资源对象的索引值列表
 type IndexFunc func(obj interface{}) ([]string, error)
 
 // IndexFuncToKeyFuncAdapter adapts an indexFunc to a keyFunc.  This is only useful if your index function returns
@@ -92,10 +100,30 @@ func MetaNamespaceIndexFunc(obj interface{}) ([]string, error) {
 }
 
 // Index maps the indexed value to a set of keys in the store that match on that value
-type Index map[string]sets.String
+// 索引键与对象键集合的映射
+type Index map[string]sets.String // sets.String存了object key
 
 // Indexers maps a name to an IndexFunc
+// string 等于索引方式：我们可以更加label或者命名空间去索引,从而获取到索引健列表
+// 具体怎么实现，是我们根据IndexFunc去实现
+// 索引器名称与 IndexFunc 的映射，相当于存储索引的各种分类
+// 存储索引器，key 为索引器名称，value 为索引器的实现函数
+//
+//	indexers: {
+//		"namespace": NamespaceFunc,
+//	    "nodeName": NodeNameFunc,
+//	}
 type Indexers map[string]IndexFunc
 
 // Indices maps a name to an Index
+// 索引器名称与 Index 索引的映射
+// 存储缓存器，key 为索引器名称，value 为缓存的数据
+//
+//	Indices: {
+//			"namespace": {
+//				"default": ["pod-1","pod-2"],
+//				"kube-system": ["pod-3"]
+//			},
+//			"nodeName": {"node1": ["pod1"],"node2": ["pod2"]},
+//	}
 type Indices map[string]Index
