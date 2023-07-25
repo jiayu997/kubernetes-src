@@ -234,10 +234,12 @@ func NewSharedIndexInformer(lw ListerWatcher, exampleObject runtime.Object, defa
 	realClock := &clock.RealClock{}
 	// shareIndexInformer 实现了ShareIndexInformer
 	sharedIndexInformer := &sharedIndexInformer{
-		processor:                       &sharedProcessor{clock: realClock},
+		processor: &sharedProcessor{clock: realClock},
+		// DeletionHandlingMetaNamespaceKeyFunc = 在计算object key之前判断一下是否出于删除状态，如果处于删除状态直接返回object key，否则则计算返回
+		// indexer: 实际的本地缓存
 		indexer:                         NewIndexer(DeletionHandlingMetaNamespaceKeyFunc, indexers),
-		listerWatcher:                   lw,
-		objectType:                      exampleObject,
+		listerWatcher:                   lw,            // k8s.io/client-go/informers/apps/v1/deployment.go 中的NewFilteredDeploymentInformer 默认初始化传进来的
+		objectType:                      exampleObject, // 需要list/watch对象类型
 		resyncCheckPeriod:               defaultEventHandlerResyncPeriod,
 		defaultEventHandlerResyncPeriod: defaultEventHandlerResyncPeriod,
 		cacheMutationDetector:           NewCacheMutationDetector(fmt.Sprintf("%T", exampleObject)),
@@ -420,15 +422,24 @@ func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) {
 		// KeyFunction:
 	})
 
+	// 实例化 informer 其他组件需求的 config 配置集
 	cfg := &Config{
-		Queue:            fifo, // Delta FIFO
-		ListerWatcher:    s.listerWatcher,
-		ObjectType:       s.objectType,
+		Queue: fifo, // Delta FIFO
+		// reflector 内部会依赖这个做 list/watch 操作
+		ListerWatcher: s.listerWatcher,
+		// list/watch的资源类型： deployment/service/pod等
+		ObjectType: s.objectType,
+		// 全量同步周期
 		FullResyncPeriod: s.resyncCheckPeriod,
-		RetryOnError:     false,
-		ShouldResync:     s.processor.shouldResync,
+		// 错误重试
+		RetryOnError: false,
+		ShouldResync: s.processor.shouldResync,
 
 		// 这里主要是数据从Pop里面弹出后，要执行这个操作
+		// 这个是 reflector 消费 delta fifo 触发的回调方法
+		// Delta FIFO数据Pop出来后主要做了二方面事情：
+		// 1. 更新本地缓存
+		// 2. 初始化事件处理监听器,一直去处理我们自定义的这个函数informer.AddEventHandler(cache.ResourceEventHandlerFuncs{})
 		Process:           s.HandleDeltas,
 		WatchErrorHandler: s.watchErrorHandler,
 	}
@@ -445,11 +456,16 @@ func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) {
 
 	// Separate stop channel because Processor should be stopped strictly after controller
 	processorStopCh := make(chan struct{})
+
 	var wg wait.Group
 	defer wg.Wait()              // Wait for Processor to stop
 	defer close(processorStopCh) // Tell Processor to stop
 
+	// 缓存变更检测, 不用纠结其实现
 	wg.StartWithChannel(processorStopCh, s.cacheMutationDetector.Run)
+
+	// 启动 sharedProcessor, s.processor主要是在：k8s.io/client-go/tools/cache/shared_informer.go的NewSharedIndexInformer()中被初始化的
+	// s.processor数据主要是在执行：informer.AddEventHandler(cache.ResourceEventHandlerFuncs()}时初始化processorListener(用来执行用户定义的哪些函数)
 	wg.StartWithChannel(processorStopCh, s.processor.run)
 
 	defer func() {
@@ -511,6 +527,8 @@ func (s *sharedIndexInformer) GetController() Controller {
 	return &dummyController{informer: s}
 }
 
+// sharedIndexInformer 是支持动态添加 ResourceEventHandler 事件方法
+// 根据传入的 handler 对象构建 listener 监听器. 然后把监听器加到 listeners 数组里, 并启动 run 和 pop 两个协程
 func (s *sharedIndexInformer) AddEventHandler(handler ResourceEventHandler) {
 	s.AddEventHandlerWithResyncPeriod(handler, s.defaultEventHandlerResyncPeriod)
 }
@@ -542,11 +560,11 @@ func (s *sharedIndexInformer) AddEventHandlerWithResyncPeriod(handler ResourceEv
 	}
 
 	if resyncPeriod > 0 {
+		// 最少一秒
 		if resyncPeriod < minimumResyncPeriod {
 			klog.Warningf("resyncPeriod %v is too small. Changing it to the minimum allowed value of %v", resyncPeriod, minimumResyncPeriod)
 			resyncPeriod = minimumResyncPeriod
 		}
-
 		if resyncPeriod < s.resyncCheckPeriod {
 			if s.started {
 				klog.Warningf("resyncPeriod %v is smaller than resyncCheckPeriod %v and the informer has already started. Changing it to %v", resyncPeriod, s.resyncCheckPeriod, s.resyncCheckPeriod)
@@ -561,8 +579,10 @@ func (s *sharedIndexInformer) AddEventHandlerWithResyncPeriod(handler ResourceEv
 		}
 	}
 
+	// handler = 事件处理方法 = cache.ResourceEventHandlerFuncs
 	listener := newProcessListener(handler, resyncPeriod, determineResyncPeriod(resyncPeriod, s.resyncCheckPeriod), s.clock.Now(), initialBufferSize)
 
+	// 当shareIndexInformer没有启动的时候,直接把事件监听器加进去
 	if !s.started {
 		s.processor.addListener(listener)
 		return
@@ -576,23 +596,33 @@ func (s *sharedIndexInformer) AddEventHandlerWithResyncPeriod(handler ResourceEv
 	s.blockDeltas.Lock()
 	defer s.blockDeltas.Unlock()
 
+	// 把构建的 listener 放到 processor 的 listeners 数组里,并启动两个协程处理 run 和 pop 方法.
 	s.processor.addListener(listener)
+
+	// 增加通知, s.indexer.List = 返回当前缓存中所有object的List
 	for _, item := range s.indexer.List() {
+		// 增加通知
 		listener.add(addNotification{newObj: item})
 	}
 }
 
 // obj = object
+// HandleDeltas 用来处理从 DeltaFIFO 拿到的 deltas 事件列表, 然后通知给所有的 lisenter 去处理
 func (s *sharedIndexInformer) HandleDeltas(obj interface{}) error {
 	s.blockDeltas.Lock()
 	defer s.blockDeltas.Unlock()
 
 	// from oldest to newest
+	// 拿到deltas事件列表, 然后通知给所有的lisenter去处理
 	for _, d := range obj.(Deltas) {
 		switch d.Type {
 		case Sync, Replaced, Added, Updated:
 			s.cacheMutationDetector.AddObject(d.Object)
+			// old = 从缓存中拿到的object
+			// exists = 本地缓存是否存在这个object
 			if old, exists, err := s.indexer.Get(d.Object); err == nil && exists {
+				// 当本地存在这个object的时候(本地的是老的),更新本地缓存
+				// 更新本地缓存的同时，还会更新本地的索引
 				if err := s.indexer.Update(d.Object); err != nil {
 					return err
 				}
@@ -602,6 +632,8 @@ func (s *sharedIndexInformer) HandleDeltas(obj interface{}) error {
 				case d.Type == Sync:
 					// Sync events are only propagated to listeners that requested resync
 					isSync = true
+					// Reflector作为生产者将数据发送到Delta FIFO Queue,其中Reflector的list事件对应Delta FIFO的Replaced事件，
+					// Reflector的watch的Added/Modified/Deleted事件对应Delta FIFO的Added/Updated/Deleted事件，Reflector的resync事件对应Delta FIFO的sync事件
 				case d.Type == Replaced:
 					if accessor, err := meta.Accessor(d.Object); err == nil {
 						if oldAccessor, err := meta.Accessor(old); err == nil {
@@ -611,12 +643,14 @@ func (s *sharedIndexInformer) HandleDeltas(obj interface{}) error {
 						}
 					}
 				}
-				// 事件的分发
+				// 事件的分发, 没有直接使用 delta 结构, 而是使用 Notification 结构体封装了
 				s.processor.distribute(updateNotification{oldObj: old, newObj: d.Object}, isSync)
 			} else { // 本地缓存不存在
+				// 将这次的object更新到本地缓存中去，同时还要更新其索引
 				if err := s.indexer.Add(d.Object); err != nil {
 					return err
 				}
+				// 事件的分发, 没有直接使用 delta 结构, 而是使用 Notification 结构体封装了
 				s.processor.distribute(addNotification{newObj: d.Object}, false)
 			}
 		case Deleted:
@@ -624,6 +658,7 @@ func (s *sharedIndexInformer) HandleDeltas(obj interface{}) error {
 			if err := s.indexer.Delete(d.Object); err != nil {
 				return err
 			}
+			// 事件的分发, 没有直接使用 delta 结构, 而是使用 Notification 结构体封装了
 			s.processor.distribute(deleteNotification{oldObj: d.Object}, false)
 		}
 	}
@@ -640,19 +675,22 @@ type sharedProcessor struct {
 	listenersStarted bool
 	listenersLock    sync.RWMutex
 
-	// 事件处理器集合
+	// 事件处理器集合,可以动态增加
 	listeners        []*processorListener
 	syncingListeners []*processorListener
 	clock            clock.Clock
 	wg               wait.Group
 }
 
+// 把构建的 listener 放到 processor 的 listeners 数组里,并启动两个协程处理 run 和 pop 方法
 func (p *sharedProcessor) addListener(listener *processorListener) {
 	p.listenersLock.Lock()
 	defer p.listenersLock.Unlock()
 
 	p.addListenerLocked(listener)
+
 	if p.listenersStarted {
+		// 事件处理器启动
 		p.wg.Start(listener.run)
 		p.wg.Start(listener.pop)
 	}
@@ -663,37 +701,51 @@ func (p *sharedProcessor) addListenerLocked(listener *processorListener) {
 	p.syncingListeners = append(p.syncingListeners, listener)
 }
 
+// 事件分发
 func (p *sharedProcessor) distribute(obj interface{}, sync bool) {
 	p.listenersLock.RLock()
 	defer p.listenersLock.RUnlock()
 
 	if sync {
+		// 遍历同步类型监听器
 		for _, listener := range p.syncingListeners {
 			listener.add(obj)
 		}
 	} else {
+		// 遍历监听器
 		for _, listener := range p.listeners {
 			listener.add(obj)
 		}
 	}
 }
 
+// 启动 sharedProcessor 处理器, 遍历所有的 listeners 监听器, 每个 listener 启动两个协程处理 run 和 pop 方法.
+// pop() 监听 addCh 队列把 notification 对象扔到 nextCh 管道里
+// run() 对 nextCh 进行监听, 然后根据不同类型调用不同的 ResourceEventHandler 方法
+// 让人值得注意的是 pop() 方法, 该方法里对数据的搬运有些绕. 你需要细心推敲下代码, 其过程也只是 addCh -> pendingNotifications -> nextCh 而已
+// addCh 和 nextCh 都是无缓冲的管道, 在这里只是用来做通知, 因为不好预设 channel 应该配置多大, 大了浪费, 小了则出现概率阻塞
+// 那么如果解决 channel 不定长的问题? k8s 里很多组件都是使用一个 ringbuffer 来实现的元素暂存.
 func (p *sharedProcessor) run(stopCh <-chan struct{}) {
 	func() {
 		p.listenersLock.RLock()
 		defer p.listenersLock.RUnlock()
+		// 遍历所有 listeners 的 run 和 pop 方法
 		for _, listener := range p.listeners {
 			p.wg.Start(listener.run)
 			p.wg.Start(listener.pop)
 		}
 		p.listenersStarted = true
 	}()
+
+	// 当未收到终止信号前，一直停留在这
 	<-stopCh
 	p.listenersLock.RLock()
 	defer p.listenersLock.RUnlock()
+	// 退出收尾操作, 遍历 listeners 执行退出
 	for _, listener := range p.listeners {
 		close(listener.addCh) // Tell .pop() to stop. .pop() will tell .run() to stop
 	}
+	// 等待所有关联的协程退出
 	p.wg.Wait() // Wait for all .pop() and .run() to stop
 }
 
@@ -780,8 +832,8 @@ func newProcessListener(handler ResourceEventHandler, requestedResyncPeriod, res
 	ret := &processorListener{
 		nextCh:                make(chan interface{}),
 		addCh:                 make(chan interface{}),
-		handler:               handler,
-		pendingNotifications:  *buffer.NewRingGrowing(bufferSize),
+		handler:               handler,                            // 我们自定义事件处理函数
+		pendingNotifications:  *buffer.NewRingGrowing(bufferSize), // default 1024
 		requestedResyncPeriod: requestedResyncPeriod,
 		resyncPeriod:          resyncPeriod,
 	}
@@ -791,10 +843,13 @@ func newProcessListener(handler ResourceEventHandler, requestedResyncPeriod, res
 	return ret
 }
 
+// 将事件obj -> addCh
 func (p *processorListener) add(notification interface{}) {
+	// 把obj写到listener对应的addCh管道里.
 	p.addCh <- notification
 }
 
+// 从addCh中取出数据放到nextCh中
 func (p *processorListener) pop() {
 	defer utilruntime.HandleCrash()
 	defer close(p.nextCh) // Tell .run() to stop
@@ -803,20 +858,30 @@ func (p *processorListener) pop() {
 	var notification interface{}
 	for {
 		select {
-		case nextCh <- notification:
+		// 把从addCh获取的对象扔到nextCh里
+		// 这里丢到nextCh后，(p *processorListener) run() 就会去处理这个管道里面的数据
+		case nextCh <- notification: // 这里相当于已经分发了事件
 			// Notification dispatched
 			var ok bool
+			// 从环形队列中获取一个object(由于已经处理了一个事件，这里再去获取事件)
 			notification, ok = p.pendingNotifications.ReadOne()
+			// ok = false, ringbuffer 没有需要处理的
 			if !ok { // Nothing to pop
+				// 既然没有事情要做, 那么就设 nextCh 为 nil.
+				// 当nextCh为nil时, select忽略该case
 				nextCh = nil // Disable this select case
 			}
+			// 当p.addCh 收到事件通知后，这里触发
+			// 从 addCh 获取对象, 如果上一次的 noti 还未扔到 nextCh 里, 那么之后的对象扔到 buffer 里
 		case notificationToAdd, ok := <-p.addCh:
 			if !ok {
 				return
 			}
+			//  当 notification 为空时, 给 nextCh 一个能用的 channel
 			if notification == nil { // No notification to pop (and pendingNotifications is empty)
 				// Optimize the case - skip adding to pendingNotifications
 				notification = notificationToAdd
+				// 这里相当于初始化了, nextCh变成非空了
 				nextCh = p.nextCh
 			} else { // There is already a notification waiting to be dispatched
 				p.pendingNotifications.WriteOne(notificationToAdd)
@@ -833,6 +898,12 @@ func (p *processorListener) run() {
 	stopCh := make(chan struct{})
 	wait.Until(func() {
 		for next := range p.nextCh {
+			// 实际上这里就是在执行真正的事件处理函数(本地的缓存已经更新了object和索引)
+			// informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+			//	AddFunc: onAdd,
+			//  UpdateFunc: onUpdate,
+			//  DeleteFunc: onDelete,
+			//})
 			switch notification := next.(type) {
 			case updateNotification:
 				p.handler.OnUpdate(notification.oldObj, notification.newObj)

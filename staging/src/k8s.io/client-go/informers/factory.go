@@ -90,6 +90,7 @@ func WithTweakListOptions(tweakListOptions internalinterfaces.TweakListOptionsFu
 }
 
 // WithNamespace limits the SharedInformerFactory to the specified namespace.
+// 设置SharedInformerFactory在指定命名空间内
 func WithNamespace(namespace string) SharedInformerOption {
 	return func(factory *sharedInformerFactory) *sharedInformerFactory {
 		factory.namespace = namespace
@@ -138,7 +139,7 @@ func NewSharedInformerFactoryWithOptions(client kubernetes.Interface, defaultRes
 	factory := &sharedInformerFactory{
 		client:           client,
 		namespace:        v1.NamespaceAll,
-		defaultResync:    defaultResync,
+		defaultResync:    defaultResync,  // 多久同步一次,初始化时传入的
 		informers:        make(map[reflect.Type]cache.SharedIndexInformer),
 		startedInformers: make(map[reflect.Type]bool),
 		customResync:     make(map[reflect.Type]time.Duration),
@@ -146,6 +147,7 @@ func NewSharedInformerFactoryWithOptions(client kubernetes.Interface, defaultRes
 
 	// Apply all options
 	for _, opt := range options {
+		// Opt是用于对SharedInformer设置一些选项或过滤条件的函数
 		factory = opt(factory)
 	}
 
@@ -153,12 +155,18 @@ func NewSharedInformerFactoryWithOptions(client kubernetes.Interface, defaultRes
 }
 
 // Start initializes all requested informers.
+// 启动不同资源的shareindexinformer
 func (f *sharedInformerFactory) Start(stopCh <-chan struct{}) {
 	f.lock.Lock()
 	defer f.lock.Unlock()
 
 	for informerType, informer := range f.informers {
+		// 当某个informer没有启动时，启动
+		// informerType = &apps.v1.deployment{}
 		if !f.startedInformers[informerType] {
+			// 调用：staging/src/k8s.io/client-go/tools/cache/shared_informer.go
+			// func (s *sharedIndexInformer) Run(stopCh <-chan struct{})
+			// 初始化Delta FIFO & Controller
 			go informer.Run(stopCh)
 			f.startedInformers[informerType] = true
 		}
@@ -187,26 +195,36 @@ func (f *sharedInformerFactory) WaitForCacheSync(stopCh <-chan struct{}) map[ref
 	return res
 }
 
-// InternalInformerFor returns the SharedIndexInformer for obj using an internal
-// client.
+// InternalInformerFor returns the SharedIndexInformer for obj using an internal client.
+// obj = &appsv1.Deployment{}
+// newFunc = cache.SharedIndexInformer
 func (f *sharedInformerFactory) InformerFor(obj runtime.Object, newFunc internalinterfaces.NewInformerFunc) cache.SharedIndexInformer {
 	f.lock.Lock()
 	defer f.lock.Unlock()
 
 	informerType := reflect.TypeOf(obj)
+
+	// 判断某类资源的informer是否存在，如果存在就返回
 	informer, exists := f.informers[informerType]
 	if exists {
 		return informer
 	}
 
+	// 同步时间设置
 	resyncPeriod, exists := f.customResync[informerType]
 	if !exists {
 		resyncPeriod = f.defaultResync
 	}
 
+	// newFunc = k8s.io/client-go/informers/apps/v1/deployment.go 中的 defaultInformer
+	// 1. 主要是初始化了一个实际的shareindexinformer
+	// 2. 初始化缓存等配置
 	informer = newFunc(f.client, resyncPeriod)
+
+	// 将某个资源的informer添加到informerFactory中去
 	f.informers[informerType] = informer
 
+	// 返回某个资源的informer
 	return informer
 }
 
@@ -248,6 +266,7 @@ func (f *sharedInformerFactory) Internal() apiserverinternal.Interface {
 // 	deployInformer := informerFactory.Apps().V1().Deployments()
 func (f *sharedInformerFactory) Apps() apps.Interface {
 	// f.namespace 默认为v1.NamespaceAll = ""
+	// 这里的f = SharedInformerFactory
 	return apps.New(f, f.namespace, f.tweakListOptions)
 }
 

@@ -43,11 +43,13 @@ type group struct {
 
 // New returns a new Interface.
 func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakListOptions internalinterfaces.TweakListOptionsFunc) Interface {
+	// 初始化了一个group,这个group具有V1(),V1beta1(),V1beta2()方法
 	return &group{factory: f, namespace: namespace, tweakListOptions: tweakListOptions}
 }
 
 // V1 returns a new v1.Interface.
 func (g *group) V1() v1.Interface {
+	// 调用： staging/src/k8s.io/client-go/informers/apps/v1/interface.go
 	return v1.New(g.factory, g.namespace, g.tweakListOptions)
 }
 

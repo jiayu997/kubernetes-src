@@ -138,8 +138,8 @@ func SplitMetaNamespaceKey(key string) (namespace, name string, err error) {
 }
 
 // `*cache` implements Indexer in terms of a ThreadSafeStore and an associated KeyFunc.
-// cache 实现了Indexer
 // cache 这个结构体只包含了keyFunc和cacheStorage，所以indexer实际的实现还是由cacheStorage来实现的
+// cache 实现了Indexer,这个玩意实际上就是缓存
 type cache struct {
 	// cacheStorage bears the burden of thread safety for the cache
 	cacheStorage ThreadSafeStore

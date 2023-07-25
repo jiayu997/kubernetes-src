@@ -144,6 +144,10 @@ type DeltaType string
 
 // Change type definition
 // 这里对应的是DeltaType的操作类型
+// 重点：
+//
+//	Reflector作为生产者将数据发送到Delta FIFO Queue,其中Reflector的list事件对应Delta FIFO的Replaced事件，
+//	Reflector的watch的Added/Modified/Deleted事件对应Delta FIFO的Added/Updated/Deleted事件，Reflector的resync事件对应Delta FIFO的sync事件
 const (
 	Added   DeltaType = "Added"
 	Updated DeltaType = "Updated"

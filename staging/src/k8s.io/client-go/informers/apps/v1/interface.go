@@ -44,6 +44,7 @@ type version struct {
 
 // New returns a new Interface.
 func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakListOptions internalinterfaces.TweakListOptionsFunc) Interface {
+	// 这里初始化了一个version结构体，具有上述这些方法
 	return &version{factory: f, namespace: namespace, tweakListOptions: tweakListOptions}
 }
 
@@ -59,6 +60,7 @@ func (v *version) DaemonSets() DaemonSetInformer {
 
 // Deployments returns a DeploymentInformer.
 func (v *version) Deployments() DeploymentInformer {
+	// 这里实例化了一个deploymentInformer
 	return &deploymentInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
