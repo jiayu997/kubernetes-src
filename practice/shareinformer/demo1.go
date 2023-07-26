@@ -44,13 +44,13 @@ func Demo1() {
 	// &deploymentInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 	deploymentInformer := informerFactory.Apps().V1().Deployments()
 
-	// 将deployment informer加入到informer Factory中,同时并返回deployment informer过来
+	// 返回一个：cache.SharedIndexInformer: sharedIndexInformer
 	informer := deploymentInformer.Informer()
 
 	// get lister, 返回一个本地deployment Indexer
 	_ = deploymentInformer.Lister()
 
-	// add event handler, 这里会后台生产事件监听器，一直去处理事件
+	// add event handler, 这里会后台生产事件监听器，一直去处理事件(在没启动的时候，还没有事件发过来)
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			fmt.Println("add")

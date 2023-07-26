@@ -415,7 +415,7 @@ func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) {
 	}
 	// 初始化Delta FIFO
 	fifo := NewDeltaFIFOWithOptions(DeltaFIFOOptions{
-		// 本地缓存indexer
+		// 本地缓存indexer,这里主要是用与Delta FIFO -> Indexer中
 		KnownObjects:          s.indexer,
 		EmitDeltaTypeReplaced: true,
 		// 如果这里初始化的时候没有指定，会使用默认的计算方式: namespace/name | name
@@ -438,8 +438,8 @@ func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) {
 		// 这里主要是数据从Pop里面弹出后，要执行这个操作
 		// 这个是 reflector 消费 delta fifo 触发的回调方法
 		// Delta FIFO数据Pop出来后主要做了二方面事情：
-		// 1. 更新本地缓存
-		// 2. 初始化事件处理监听器,一直去处理我们自定义的这个函数informer.AddEventHandler(cache.ResourceEventHandlerFuncs{})
+		// 1. 首先更新本地缓存
+		// 2. 然后将相应的事件分发到事件处理监听器上(sharedProcessor),然后由监听器去执行我们自定义的这个函数informer.AddEventHandler(cache.ResourceEventHandlerFuncs{})
 		Process:           s.HandleDeltas,
 		WatchErrorHandler: s.watchErrorHandler,
 	}
@@ -466,6 +466,7 @@ func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) {
 
 	// 启动 sharedProcessor, s.processor主要是在：k8s.io/client-go/tools/cache/shared_informer.go的NewSharedIndexInformer()中被初始化的
 	// s.processor数据主要是在执行：informer.AddEventHandler(cache.ResourceEventHandlerFuncs()}时初始化processorListener(用来执行用户定义的哪些函数)
+	// 真正启动了：sharedProcessor，开始去处理Delta FIFO distribute过来的事件
 	wg.StartWithChannel(processorStopCh, s.processor.run)
 
 	defer func() {
@@ -574,6 +575,7 @@ func (s *sharedIndexInformer) AddEventHandlerWithResyncPeriod(handler ResourceEv
 				// resyncCheckPeriod to match resyncPeriod and adjust the resync periods of all the listeners
 				// accordingly
 				s.resyncCheckPeriod = resyncPeriod
+				// 设置同步时间
 				s.processor.resyncCheckPeriodChanged(resyncPeriod)
 			}
 		}
@@ -644,6 +646,7 @@ func (s *sharedIndexInformer) HandleDeltas(obj interface{}) error {
 					}
 				}
 				// 事件的分发, 没有直接使用 delta 结构, 而是使用 Notification 结构体封装了
+				// 这里分发后, shareprocessor就可以用我们定义的事件处理函数进行处理了
 				s.processor.distribute(updateNotification{oldObj: old, newObj: d.Object}, isSync)
 			} else { // 本地缓存不存在
 				// 将这次的object更新到本地缓存中去，同时还要更新其索引
@@ -651,6 +654,7 @@ func (s *sharedIndexInformer) HandleDeltas(obj interface{}) error {
 					return err
 				}
 				// 事件的分发, 没有直接使用 delta 结构, 而是使用 Notification 结构体封装了
+				// 这里分发后, shareprocessor就可以用我们定义的事件处理函数进行处理了
 				s.processor.distribute(addNotification{newObj: d.Object}, false)
 			}
 		case Deleted:
@@ -659,6 +663,7 @@ func (s *sharedIndexInformer) HandleDeltas(obj interface{}) error {
 				return err
 			}
 			// 事件的分发, 没有直接使用 delta 结构, 而是使用 Notification 结构体封装了
+			// 这里分发后, shareprocessor就可以用我们定义的事件处理函数进行处理了
 			s.processor.distribute(deleteNotification{oldObj: d.Object}, false)
 		}
 	}
@@ -687,6 +692,8 @@ func (p *sharedProcessor) addListener(listener *processorListener) {
 	p.listenersLock.Lock()
 	defer p.listenersLock.Unlock()
 
+	// 将shareProcessor的listeners和syncingListeners初始化
+	// listener 包含了我们定义的事件处理方法
 	p.addListenerLocked(listener)
 
 	if p.listenersStarted {

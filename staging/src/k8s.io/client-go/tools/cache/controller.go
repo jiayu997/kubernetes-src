@@ -176,10 +176,13 @@ func (c *controller) Run(stopCh <-chan struct{}) {
 
 	var wg wait.Group
 
-	// 这里启动reflector,启动后reflector会根据ListerWatcher来watch对应的资源(理论上不会watch其他的资源),然后将数据放入Delta FIFO
+	// 这里启动reflector,启动后reflector会根据Lister&Watcher来watch对应的资源(理论上不会watch其他的资源),然后将数据放入Delta FIFO(带有不同的事件类型)
 	wg.StartWithChannel(stopCh, r.Run)
 
 	// processLoop 的逻辑是不断从 deltaQueue 里消费事件, 然后 deltaQueue 内部每次 pop 完之前会调用传入的 process 方法. 该方法是由 processDeltas 来实现的
+	// 这里主要实现了二个功能：
+	// 1. 更新本地缓存
+	// 2. 分发事件到我们自定义的事件处理函数里面去
 	wait.Until(c.processLoop, time.Second, stopCh)
 	wg.Wait()
 }
@@ -213,7 +216,11 @@ func (c *controller) LastSyncResourceVersion() string {
 func (c *controller) processLoop() {
 	for {
 		// c.config.Queue.Pop 就是Delta FIFO中的Pop
-		// c.config.Process是在: k8s.io/client-go/tools/cache/shared_informer.go的Run被初始化的
+		// c.config.Process初始化具体为：staging/src/k8s.io/client-go/tools/cache/shared_informer.go的func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) 中的s.HandleDeltas函数
+		// 执行完这个Pop函数后，会去执行s.HandleDeltas函数,这个函数主要功能：
+		// 1. 更新本地缓存indexers
+		// 2. 分发事件到事件监听器上面,然后由监听器去执行我们自定义事件函数
+		// 3. c.config.Process并不是执行我们的自定义函数，而是封装了一层
 		obj, err := c.config.Queue.Pop(PopProcessFunc(c.config.Process))
 		if err != nil {
 			if err == ErrFIFOClosed {

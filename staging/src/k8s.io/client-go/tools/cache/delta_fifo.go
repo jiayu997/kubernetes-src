@@ -639,8 +639,11 @@ func (f *DeltaFIFO) Pop(process PopProcessFunc) (interface{}, error) {
 			defer trace.LogIfLong(100 * time.Millisecond)
 		}
 
-		// 针对Pop出来的某个资源事件集合，传入用户的process函数去处理
-		// 这个process函数内部实现了Pop出来的数据，同步到Indexer缓存中
+		// 针对Pop出来的某个资源事件集合，传入process函数中去执行
+		// process这个函数实际上就是：staging/src/k8s.io/client-go/tools/cache/shared_informer.go中的func (s *sharedIndexInformer) HandleDeltas(obj interface{})函数
+		// 在HandleDeltas函数中，主要实现了二个功能：
+		// 1. 更新本地缓存
+		// 2. 分发事件到我们自定义的事件处理函数里面去
 		err := process(item)
 		if e, ok := err.(ErrRequeue); ok {
 			f.addIfNotPresent(id, item)

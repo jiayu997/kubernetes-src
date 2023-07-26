@@ -384,6 +384,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 
 		// object list <-> []runtime object
 		// put object into delta fifo,同时会默认将even_type设置为sync或者replace
+		// 将List到的事件同步到本地Delta FIFO中去
 		if err := r.syncWith(items, resourceVersion); err != nil {
 			return fmt.Errorf("unable to sync list result: %v", err)
 		}
@@ -550,7 +551,7 @@ loop:
 				utilruntime.HandleError(fmt.Errorf("%s: unable to understand watch event %#v", r.name, event))
 				continue
 			}
-			
+
 			// 获取到某个资源的资源版本号
 			newResourceVersion := meta.GetResourceVersion()
 
