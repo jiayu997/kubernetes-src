@@ -680,7 +680,7 @@ func (f *DeltaFIFO) Replace(list []interface{}, _ string) error {
 	}
 
 	// Add Sync/Replaced action for each new item.
-	// list = [] Object
+	// list = [] deployment
 	for _, item := range list {
 		// item = Object
 		key, err := f.KeyOf(item)
@@ -697,6 +697,7 @@ func (f *DeltaFIFO) Replace(list []interface{}, _ string) error {
 	}
 
 	// 当indexer = nil时候
+	// replace 会过来的数据如果比以前少了某个资源的事件，那么在本地Delta FIFO中就会增加一个delete resource的Delta
 	if f.knownObjects == nil {
 		// Do deletion detection against our own list.
 		queuedDeletions := 0
@@ -708,6 +709,7 @@ func (f *DeltaFIFO) Replace(list []interface{}, _ string) error {
 			// Delete pre-existing items not in the new list. This could happen if watch deletion event was missed while disconnected from apiserver.
 			// 当以前的items中存在key，这个key不包含在这次新的List object key,这说明这个object key是老的，需要删除
 			var deletedObj interface{}
+			// 返回最后一个Delta元素(包含了事件与object)
 			if n := oldItem.Newest(); n != nil {
 				deletedObj = n.Object
 			}
@@ -727,9 +729,11 @@ func (f *DeltaFIFO) Replace(list []interface{}, _ string) error {
 
 		return nil
 	}
+	// when indexer is nil, Delta FiFO also increase resource Deltas But doesn't store to indexers
 
 	// Detect deletions not already in the queue.
-	// 当indexer 缓存不为空的时候,获取到所有的object key
+
+	// get indexer all resources keys
 	knownKeys := f.knownObjects.ListKeys()
 	queuedDeletions := 0
 	for _, k := range knownKeys {
@@ -738,6 +742,7 @@ func (f *DeltaFIFO) Replace(list []interface{}, _ string) error {
 		}
 
 		// 当这次更新的所有object中,存在某个object key在本地缓存indexer中不存在时，这里会生成一个delete obj的delete操作到Deltas中
+		// Delta FIFO sync with Indexer not apiserver
 		deletedObj, exists, err := f.knownObjects.GetByKey(k)
 		if err != nil {
 			deletedObj = nil

@@ -201,6 +201,7 @@ func NewNamedReflector(name string, lw ListerWatcher, expectedType interface{}, 
 		// 0.22 QPS. If we don't backoff for 2min, assume API server is healthy and we reset the backoff.
 		backoffManager:         wait.NewExponentialBackoffManager(800*time.Millisecond, 30*time.Second, 2*time.Minute, 2.0, 1.0, realClock),
 		initConnBackoffManager: wait.NewExponentialBackoffManager(800*time.Millisecond, 30*time.Second, 2*time.Minute, 2.0, 1.0, realClock),
+		// set sync from indexer
 		resyncPeriod:           resyncPeriod,
 		clock:                  realClock,
 		watchErrorHandler:      WatchErrorHandler(DefaultWatchErrorHandler),
@@ -323,7 +324,9 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 				pager.PageSize = 0
 			}
 			// 这里是实际在执行: r.listerWatcher.List , 获取到list 返回
+			// here will get deploymentList
 			list, paginatedResult, err = pager.List(context.Background(), options)
+			// retry again when resource expired
 			if isExpiredError(err) || isTooLargeResourceVersionError(err) {
 				r.setIsLastSyncResourceVersionUnavailable(true)
 				// Retry immediately if the resource version used to list is unavailable.
@@ -374,18 +377,21 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 		}
 		// 获取资源对象版本
 		resourceVersion = listMetaInterface.GetResourceVersion()
+
 		initTrace.Step("Resource version extracted")
 
-		// 获取到的list数据进行解析 object -> []runtime object list
+		// change deploymentList -> []deployment
 		items, err := meta.ExtractList(list)
+
 		if err != nil {
 			return fmt.Errorf("unable to understand list result %#v (%v)", list, err)
 		}
+
 		initTrace.Step("Objects extracted")
 
-		// object list <-> []runtime object
 		// put object into delta fifo,同时会默认将even_type设置为sync或者replace
 		// 将List到的事件同步到本地Delta FIFO中去
+		// deployments -> Delta FIFO
 		if err := r.syncWith(items, resourceVersion); err != nil {
 			return fmt.Errorf("unable to sync list result: %v", err)
 		}
@@ -469,6 +475,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 			// If that's the case begin exponentially backing off and resend watch request.
 			// Do the same for "429" errors.
 			if utilnet.IsConnectionRefused(err) || apierrors.IsTooManyRequests(err) {
+				// wait time to do it again after xx
 				<-r.initConnBackoffManager.Backoff().C()
 				continue
 			}
@@ -506,6 +513,7 @@ func (r *Reflector) syncWith(items []runtime.Object, resourceVersion string) err
 		found = append(found, item)
 	}
 	// 将reflector 获取到[]object放入Delta FIFO,同时event_type会设置为sync或者replace
+	// 同时还会将delta FIFO先indexer同步
 	return r.store.Replace(found, resourceVersion)
 }
 
