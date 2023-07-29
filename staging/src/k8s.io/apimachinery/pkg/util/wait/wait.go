@@ -131,27 +131,36 @@ func NonSlidingUntilWithContext(ctx context.Context, f func(context.Context), pe
 //
 // Close stopCh to stop. f may not be invoked if stop channel is already
 // closed. Pass NeverStop to if you don't want it stop.
+
+// 1.f需要定时执行的逻辑函数
+// 2.period,定时任务的时间间隔
+// 3.jitterFactor:如果大于 0.0，间隔时间变为 duration 到 duration + maxFactor * duration 的随机值（其中如果jitterFactor值大于0，那么maxFactor=jitterFactor）
+// 4. sliding,逻辑的执行时间是否不算入间隔时间，如果 sliding 为 true，则在 f() 运行之后计算周期。如果为 false，那么 period 包含 f() 的执行时间。
 func JitterUntil(f func(), period time.Duration, jitterFactor float64, sliding bool, stopCh <-chan struct{}) {
 	BackoffUntil(f, NewJitteredBackoffManager(period, jitterFactor, &clock.RealClock{}), sliding, stopCh)
 }
 
 // BackoffUntil loops until stop channel is closed, run f every duration given by BackoffManager.
 //
-// If sliding is true, the period is computed after f runs. If it is false then
-// period includes the runtime for f.
+// If sliding is true, the period is computed after f runs. If it is false then period includes the runtime for f.
+// f = 匿名函数(执行真正的用户逻辑)
 func BackoffUntil(f func(), backoff BackoffManager, sliding bool, stopCh <-chan struct{}) {
 	var t clock.Timer
 	for {
+		// 用于判断是否接收到终止信号
 		select {
 		case <-stopCh:
 			return
 		default:
 		}
 
+		// when sliding is false , start to calculate f() time useing
+		// when sliding is true , the time useage of f() will not calculate
 		if !sliding {
 			t = backoff.Backoff()
 		}
 
+		// 执行用户定义函数逻辑
 		func() {
 			defer runtime.HandleCrash()
 			f()
@@ -166,12 +175,16 @@ func BackoffUntil(f func(), backoff BackoffManager, sliding bool, stopCh <-chan 
 		// trigger t.C and stopCh, and t.C select falls through.
 		// In order to mitigate we re-check stopCh at the beginning
 		// of every loop to prevent extra executions of f().
+
+		// will loop until time is end
 		select {
 		case <-stopCh:
+			// 当收到终止信号后，也需要等计时器到了才会退出
 			if !t.Stop() {
 				<-t.C()
 			}
 			return
+			// time end
 		case <-t.C():
 		}
 	}
@@ -190,8 +203,7 @@ func JitterUntilWithContext(ctx context.Context, f func(context.Context), period
 	JitterUntil(func() { f(ctx) }, period, jitterFactor, sliding, ctx.Done())
 }
 
-// Jitter returns a time.Duration between duration and duration + maxFactor *
-// duration.
+// Jitter returns a time.Duration between duration and duration + maxFactor * duration.
 //
 // This allows clients to avoid converging on periodic behavior. If maxFactor
 // is 0.0, a suggested default value will be chosen.
@@ -199,6 +211,7 @@ func Jitter(duration time.Duration, maxFactor float64) time.Duration {
 	if maxFactor <= 0.0 {
 		maxFactor = 1.0
 	}
+	//抖动延迟时间 = 基础的延时时间 + 随机时间*抖动因子*基础的延时时间
 	wait := duration + time.Duration(rand.Float64()*maxFactor*float64(duration))
 	return wait
 }
@@ -238,22 +251,28 @@ func runConditionWithCrashProtectionWithContext(ctx context.Context, condition C
 // Backoff holds parameters applied to a Backoff function.
 type Backoff struct {
 	// The initial duration.
+	// 下次初始化的时间(是按基准范围内生成一个时间)
 	Duration time.Duration
+
 	// Duration is multiplied by factor each iteration, if factor is not zero
 	// and the limits imposed by Steps and Cap have not been reached.
 	// Should not be negative.
 	// The jitter does not contribute to the updates to the duration parameter.
+	// 如果大于 0.0 间隔时间变为 duration 到 duration + maxFactor * duration 的随机值
 	Factor float64
+
 	// The sleep at each iteration is the duration plus an additional
 	// amount chosen uniformly at random from the interval between
 	// zero and `jitter*duration`.
 	Jitter float64
+
 	// The remaining number of iterations in which the duration
 	// parameter may change (but progress can be stopped earlier by
 	// hitting the cap). If not positive, the duration is not
 	// changed. Used for exponential backoff in combination with
 	// Factor and Cap.
 	Steps int
+
 	// A limit on revised values of the duration parameter. If a
 	// multiplication by the factor parameter would make the duration
 	// exceed the cap then the duration is set to the cap and the
@@ -264,6 +283,7 @@ type Backoff struct {
 // Step (1) returns an amount of time to sleep determined by the
 // original Duration and Jitter and (2) mutates the provided Backoff
 // to update its Steps and Duration.
+// 返回下次初始化时间
 func (b *Backoff) Step() time.Duration {
 	if b.Steps < 1 {
 		if b.Jitter > 0 {
@@ -277,16 +297,21 @@ func (b *Backoff) Step() time.Duration {
 
 	// calculate the next step
 	if b.Factor != 0 {
+		// duration = duration * factor
 		b.Duration = time.Duration(float64(b.Duration) * b.Factor)
 		if b.Cap > 0 && b.Duration > b.Cap {
+			// duration 最大只能是b.cap
 			b.Duration = b.Cap
 			b.Steps = 0
 		}
 	}
 
 	if b.Jitter > 0 {
+		// duration + time.Duration(rand.Float64()*maxFactor*float64(duration)
+		// 返回一个抖动时间
 		duration = Jitter(duration, b.Jitter)
 	}
+
 	return duration
 }
 
@@ -330,41 +355,51 @@ type exponentialBackoffManagerImpl struct {
 // NewExponentialBackoffManager returns a manager for managing exponential backoff. Each backoff is jittered and
 // backoff will not exceed the given max. If the backoff is not called within resetDuration, the backoff is reset.
 // This backoff manager is used to reduce load during upstream unhealthiness.
+// wait.NewExponentialBackoffManager(800*time.Millisecond, 30*time.Second, 2*time.Minute, 2.0, 1.0, realClock)
 func NewExponentialBackoffManager(initBackoff, maxBackoff, resetDuration time.Duration, backoffFactor, jitter float64, c clock.Clock) BackoffManager {
 	return &exponentialBackoffManagerImpl{
 		backoff: &Backoff{
-			Duration: initBackoff,
-			Factor:   backoffFactor,
-			Jitter:   jitter,
+			Duration: initBackoff,   // 800*time.Millisecond
+			Factor:   backoffFactor, // 2.0
+			Jitter:   jitter,        // 1.0
 
 			// the current impl of wait.Backoff returns Backoff.Duration once steps are used up, which is not
 			// what we ideally need here, we set it to max int and assume we will never use up the steps
 			Steps: math.MaxInt32,
-			Cap:   maxBackoff,
+			Cap:   maxBackoff, // 30*time.Second  Duration <= Cap
 		},
 		backoffTimer:         nil,
-		initialBackoff:       initBackoff,
-		lastBackoffStart:     c.Now(),
-		backoffResetDuration: resetDuration,
-		clock:                c,
+		initialBackoff:       initBackoff,   //800*time.Millisecond
+		lastBackoffStart:     c.Now(),       // 返回：RealClock struct{}.time.Now()
+		backoffResetDuration: resetDuration, // 30*time.Second
+		clock:                c,             //RealClock struct{}
 	}
 }
 
 func (b *exponentialBackoffManagerImpl) getNextBackoff() time.Duration {
+	// 判断： 此时时间-上次初始化事件 > resetDuration
+	// 作用： 判断是否需要重置时间
 	if b.clock.Now().Sub(b.lastBackoffStart) > b.backoffResetDuration {
-		b.backoff.Steps = math.MaxInt32
+		b.backoff.Steps = math.MaxInt32 // 重置Step
 		b.backoff.Duration = b.initialBackoff
 	}
+	// 还没有超过重置时间
 	b.lastBackoffStart = b.clock.Now()
+
+	// 基于抖动，求出下次初始化时间
 	return b.backoff.Step()
 }
 
 // Backoff implements BackoffManager.Backoff, it returns a timer so caller can block on the timer for exponential backoff.
 // The returned timer must be drained before calling Backoff() the second time
 func (b *exponentialBackoffManagerImpl) Backoff() clock.Timer {
+	// 第一次的时候,b.backoffTimer为nil
 	if b.backoffTimer == nil {
+		// 初始化一个计时器：计时时间是根据抖动计算出来的
 		b.backoffTimer = b.clock.NewTimer(b.getNextBackoff())
 	} else {
+		// 注：比如你的定时器设置的是3秒，中间sleep1秒 < 3，这时候如果reset的话返回的就是 true(因为定时器还在等待)，如果你sleep4秒 > 3,那么返回的就是false
+		// 重新计算
 		b.backoffTimer.Reset(b.getNextBackoff())
 	}
 	return b.backoffTimer

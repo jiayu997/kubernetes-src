@@ -74,9 +74,11 @@ func New(fn ListPageFunc) *ListPager {
 // server to reduce the impact on the server. If the chunk attempt fails, it will load
 // the full list instead. The Limit field on options, if unset, will default to the page size.
 func (p *ListPager) List(ctx context.Context, options metav1.ListOptions) (runtime.Object, bool, error) {
+	// when options.Limit = 0 , will set default page size 500
 	if options.Limit == 0 {
 		options.Limit = p.PageSize
 	}
+
 	requestedResourceVersion := options.ResourceVersion
 	requestedResourceVersionMatch := options.ResourceVersionMatch
 	var list *metainternalversion.List
@@ -90,6 +92,8 @@ func (p *ListPager) List(ctx context.Context, options metav1.ListOptions) (runti
 		}
 
 		// 实际list操作,比如deployment的list，这里实际上获取到了list结果
+		// obj = result *v1.DeploymentList
+		// when list has continue field, it will list again until all results had get
 		obj, err := p.PageFn(ctx, options)
 		if err != nil {
 			// Only fallback to full list if an "Expired" errors is returned, FullListIfExpired is true, and
@@ -99,32 +103,40 @@ func (p *ListPager) List(ctx context.Context, options metav1.ListOptions) (runti
 			if !errors.IsResourceExpired(err) || !p.FullListIfExpired || options.Continue == "" {
 				return nil, paginatedResult, err
 			}
+
 			// the list expired while we were processing, fall back to a full list at
 			// the requested ResourceVersion.
 			options.Limit = 0
 			options.Continue = ""
 			options.ResourceVersion = requestedResourceVersion
 			options.ResourceVersionMatch = requestedResourceVersionMatch
+			// retry again just in resource expire
 			result, err := p.PageFn(ctx, options)
 			return result, paginatedResult, err
 		}
 
+		// meta.ListAccessor just check obj whether implement metav1.ListInterface
 		m, err := meta.ListAccessor(obj)
 		if err != nil {
 			return nil, paginatedResult, fmt.Errorf("returned object must be a list: %v", err)
 		}
 
 		// exit early and return the object we got if we haven't processed any pages
+		// when len(m.Getcontinue) = 0 indicate all result had returned
 		if len(m.GetContinue()) == 0 && list == nil {
 			return obj, paginatedResult, nil
 		}
 
 		// initialize the list and fill its contents
+		// have other object need to get from apiserver
 		if list == nil {
+			// init object(deploymentList) list
 			list = &metainternalversion.List{Items: make([]runtime.Object, 0, options.Limit+1)}
 			list.ResourceVersion = m.GetResourceVersion()
 			list.SelfLink = m.GetSelfLink()
 		}
+
+		// add deployment to list from deploymentList
 		if err := meta.EachListItem(obj, func(obj runtime.Object) error {
 			list.Items = append(list.Items, obj)
 			return nil
@@ -133,10 +145,12 @@ func (p *ListPager) List(ctx context.Context, options metav1.ListOptions) (runti
 		}
 
 		// if we have no more items, return the list
+		// when len(m.Getcontinue) = 0 indicate all result had returned
 		if len(m.GetContinue()) == 0 {
 			return list, paginatedResult, nil
 		}
 
+		//
 		// set the next loop up
 		options.Continue = m.GetContinue()
 		// Clear the ResourceVersion(Match) on the subsequent List calls to avoid the

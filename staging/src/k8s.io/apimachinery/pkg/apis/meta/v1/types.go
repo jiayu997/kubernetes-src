@@ -85,6 +85,65 @@ type ListMeta struct {
 	// minutes have passed. The resourceVersion field returned when using this continue value will be
 	// identical to the value in the first response, unless you have received this token from an error
 	// message.
+	// 你可以请求 API 服务器通过使用页（Kubernetes 将其称为“块（Chunk）”）的方式来处理 list， 完成单个集合的响应。
+	// 要以块的形式检索单个集合，针对集合的请求支持两个查询参数 limit 和 continue， 并且从集合元 metadata 字段中的所有 list 操作返回响应字段 continue。
+	// 客户端应该指定他们希望在每个带有 limit 的块中接收的条目数上限，如果集合中有更多资源， 服务器将在结果中返回 limit 资源并包含一个 continue 值
+	// 作为 API 客户端，你可以在下一次请求时将 continue 值传递给 API 服务器， 以指示服务器返回下一页（块）结果。继续下去直到服务器返回一个空的 continue 值， 你可以检索整个集合
+	// 1. 列举集群中所有 Pod，每次接收至多 500 个 Pod：
+	//	GET /api/v1/pods?limit=500
+	//	---
+	//	200 OK
+	//	Content-Type: application/json
+	//
+	//{
+	//	"kind": "PodList",
+	//	"apiVersion": "v1",
+	//	"metadata": {
+	//	"resourceVersion":"10245",
+	//	"continue": "ENCODED_CONTINUE_TOKEN",  # 这里会返回一个值
+	//	"remainingItemCount": 753,
+	//	...
+	//},
+	//	"items": [...] // returns pods 1-500
+	//}
+	// 2.继续前面的调用，返回下一组 500 个 Pod：
+	//	GET /api/v1/pods?limit=500&continue=ENCODED_CONTINUE_TOKEN   # 这里查询的时候，带了之前的continue值
+	//	---
+	//	200 OK
+	//	Content-Type: application/json
+	//
+	//{
+	//	"kind": "PodList",
+	//	"apiVersion": "v1",
+	//	"metadata": {
+	//	"resourceVersion":"10245",
+	//	"continue": "ENCODED_CONTINUE_TOKEN_2",  					# 这里返回来的时候带了continue
+	//	"remainingItemCount": 253,
+	//	...
+	//},
+	//	"items": [...] // returns pods 501-1000
+	//}
+	// 3. 继续前面的调用，返回最后 253 个 Pod：
+	//	GET /api/v1/pods?limit=500&continue=ENCODED_CONTINUE_TOKEN_2
+	//	---
+	//	200 OK
+	//	Content-Type: application/json
+	//
+	//{
+	//	"kind": "PodList",
+	//	"apiVersion": "v1",
+	//	"metadata": {
+	//	"resourceVersion":"10245",
+	//	"continue": "", // continue token is empty because we have reached the end of the list
+	//	...
+	//},
+	//	"items": [...] // returns pods 1001-1253
+	//}
+	//
+	// 请注意，集合的 resourceVersion 在每个请求中保持不变， 这表明服务器正在向你显示 Pod 的一致快照。
+	// 在版本 10245 之后创建、更新或删除的 Pod 将不会显示， 除非你在没有继续令牌的情况下发出单独的 list 请求。 这使你可以将大请求分成更小的块，然后对整个集合执行 watch 操作，而不会丢失任何更新
+	// remainingItemCount 是集合中未包含在此响应中的后续项目的数量。 如果 list 请求包含标签或字段选择器， 则剩余项目的数量是未知的，并且 API 服务器在其响应中不包含 remainingItemCount 字段。
+	// 如果 list 是完整的（因为它没有分块，或者因为这是最后一个块），没有更多的剩余项目， API 服务器在其响应中不包含 remainingItemCount 字段。 remainingItemCount 的用途是估计集合的大小
 	Continue string `json:"continue,omitempty" protobuf:"bytes,3,opt,name=continue"`
 
 	// remainingItemCount is the number of subsequent items in the list which are not included in this

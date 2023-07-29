@@ -189,6 +189,7 @@ func (c *Clientset) InternalV1alpha1() internalv1alpha1.InternalV1alpha1Interfac
 
 // AppsV1 retrieves the AppsV1Client
 func (c *Clientset) AppsV1() appsv1.AppsV1Interface {
+	// *appsv1.AppsV1Client
 	return c.appsV1
 }
 
@@ -453,6 +454,9 @@ func NewForConfigAndClient(c *rest.Config, httpClient *http.Client) (*Clientset,
 	if err != nil {
 		return nil, err
 	}
+	// restClient rest.Interface
+	// *AppsV1Client
+	// staging/src/k8s.io/client-go/kubernetes/typed/apps/v1/apps_client.go AppsV1Client
 	cs.appsV1, err = appsv1.NewForConfigAndClient(&configShallowCopy, httpClient)
 	if err != nil {
 		return nil, err

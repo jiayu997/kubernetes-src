@@ -96,11 +96,17 @@ func (c *deployments) List(ctx context.Context, opts metav1.ListOptions) (result
 	}
 	result = &v1.DeploymentList{}
 	err = c.client.Get().
+		//  指定namespace，参考path : /api/v1/namespaces/{namespace}/pods
 		Namespace(c.ns).
+		// 查找多个pod，参考path : /api/v1/namespaces/{namespace}/pods
 		Resource("deployments").
+		// 指定大小限制和序列化工具
 		VersionedParams(&opts, scheme.ParameterCodec).
+		// 超时
 		Timeout(timeout).
+		// 请求
 		Do(ctx).
+		// 结果存储result
 		Into(result)
 	return
 }

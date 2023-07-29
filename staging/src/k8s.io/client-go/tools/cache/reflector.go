@@ -240,6 +240,7 @@ func (r *Reflector) Run(stopCh <-chan struct{}) {
 	klog.V(3).Infof("Starting reflector %s (%s) from %s", r.expectedTypeName, r.resyncPeriod, r.name)
 
 	// 这个函数在未收到stopCh信号之前，会无限执行ListAndWatch函数
+	// ListAndWatch是间歇性执行
 	wait.BackoffUntil(func() {
 		if err := r.ListAndWatch(stopCh); err != nil {
 			r.watchErrorHandler(r, err)

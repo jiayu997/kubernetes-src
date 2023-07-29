@@ -65,10 +65,23 @@ func CommonAccessor(obj interface{}) (metav1.Common, error) {
 // ListAccessor returns a List interface for the provided object or an error if the object does not provide List.
 
 // IMPORTANT: Objects are NOT a superset of lists. Do not use this check to determine whether an object *is* a List.
+// check obj whether has List metav1.ListInterface
+//
+//	type ListInterface interface {
+//		GetResourceVersion() string
+//		SetResourceVersion(version string)
+//		GetSelfLink() string
+//		SetSelfLink(selfLink string)
+//		GetContinue() string
+//		SetContinue(c string)
+//		GetRemainingItemCount() *int64
+//		SetRemainingItemCount(c *int64)
+//	}
 func ListAccessor(obj interface{}) (List, error) {
 	switch t := obj.(type) {
 	case List:
 		return t, nil
+		// func (obj *ListMeta) GetListMeta() ListInterface { return obj }
 	case ListMetaAccessor:
 		if m := t.GetListMeta(); m != nil {
 			return m, nil
