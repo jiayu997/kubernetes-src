@@ -161,6 +161,11 @@ const (
 	Sync DeltaType = "Sync"
 )
 
+// 事件说明：1. 当我更新某个deployment后(副本数0 -> 1)，为什么可以监控到三个事件
+// 1: 第一个更新事件obj区别主要为: resourceVersion(add),generation(加一)发生变化
+// 2: 第二个更新事件和第一个更新事件区别：resourceVersion 增加
+// 3: 第三个更新事件和第二个更新事件区别：resourceVersion 增加
+
 // Delta is a member of Deltas (a list of Delta objects) which
 // in its turn is the type stored by a DeltaFIFO. It tells you what
 // change happened, and the object's state after* that change.
@@ -496,6 +501,7 @@ func (f *DeltaFIFO) queueActionLocked(actionType DeltaType, obj interface{}) err
 			return nil
 		}
 		klog.Errorf("Impossible dedupDeltas for id=%q: oldDeltas=%#+v, obj=%#+v; breaking invariant by storing empty Deltas", id, oldDeltas, obj)
+		// first add Deltas
 		f.items[id] = newDeltas
 		return fmt.Errorf("Impossible dedupDeltas for id=%q: oldDeltas=%#+v, obj=%#+v; broke DeltaFIFO invariant by storing empty Deltas", id, oldDeltas, obj)
 	}

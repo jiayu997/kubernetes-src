@@ -83,10 +83,12 @@ type threadSafeMap struct {
 // default/poda poda{}
 // default/podb podb{}
 // key=索引健,默认的KeyFunc计算是 namespace/资源名称
+// 将对象入缓存，同时更新索引
 func (c *threadSafeMap) Add(key string, obj interface{}) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	// 从对象键获取到obj
+	// when key not exist will get nil return
 	oldObject := c.items[key]
 	// 更新对象健对应的对象
 	c.items[key] = obj
@@ -136,7 +138,7 @@ func (c *threadSafeMap) List() []interface{} {
 }
 
 // ListKeys returns a list of all the keys of the objects currently in the threadSafeMap.
-// 返回存储在缓存中所有资源的一个object key
+// 返回存储在缓存中所有资源的一个object key List
 func (c *threadSafeMap) ListKeys() []string {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -167,6 +169,7 @@ func (c *threadSafeMap) Replace(items map[string]interface{}, resourceVersion st
 // Index 是索引的方法了
 // IndexName = 索引名称
 // obj = ojb
+// 作用：从某个索引器下面，根据用户传入的object返回匹配的所有object key list
 func (c *threadSafeMap) Index(indexName string, obj interface{}) ([]interface{}, error) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -188,6 +191,7 @@ func (c *threadSafeMap) Index(indexName string, obj interface{}) ([]interface{},
 	// 根据索引器名称获取到index,获取到index后，根据索引健更新对象健集合
 	index := c.indices[indexName]
 
+	// used to store index_key's object key
 	var storeKeySet sets.String
 	if len(indexedValues) == 1 {
 		// In majority of cases, there is exactly one value matching.
@@ -203,6 +207,7 @@ func (c *threadSafeMap) Index(indexName string, obj interface{}) ([]interface{},
 			// 遍历某个索引健下面的所有对象健
 			for key := range index[indexedValue] {
 				// 默认情况下，基于不同的索引健，可能会存在二个索引键下面包含了同样的object key,这里sets帮我们进行了去重
+				// add object key to different index key map
 				storeKeySet.Insert(key)
 			}
 		}
@@ -223,6 +228,7 @@ func (c *threadSafeMap) Index(indexName string, obj interface{}) ([]interface{},
 // ByIndex returns a list of the items whose indexed values in the given index include the given indexed value
 // indexName = 索引器名称
 // indexValue = 索引健名称
+// 返回某个索引器下某个索引健的object list
 func (c *threadSafeMap) ByIndex(indexName, indexedValue string) ([]interface{}, error) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -254,6 +260,7 @@ func (c *threadSafeMap) ByIndex(indexName, indexedValue string) ([]interface{}, 
 // indexName = 索引器名称
 // indexValue = 索引健
 // []string = 某个索引器下某个索引健对应的对象健集合
+// 作用：返回某索引器下面，某个索引健对应的所有对象健集合
 func (c *threadSafeMap) IndexKeys(indexName, indexedValue string) ([]string, error) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -326,6 +333,7 @@ func (c *threadSafeMap) AddIndexers(newIndexers Indexers) error {
 // - for delete you must provide only the oldObj
 // updateIndices must be called from a function that already has a lock on the cache
 // key = 对象健
+// oldObj 在Add时=nil
 func (c *threadSafeMap) updateIndices(oldObj interface{}, newObj interface{}, key string) {
 	var oldIndexValues, indexValues []string
 	var err error
@@ -374,6 +382,7 @@ func (c *threadSafeMap) updateIndices(oldObj interface{}, newObj interface{}, ke
 		// 获取新obj的所有索引健
 		for _, value := range indexValues {
 			// value = obj计算出来的某一个索引健
+			// addKeyToIndex 会初始化index的set.strings
 			c.addKeyToIndex(key, value, index)
 		}
 	}
@@ -382,6 +391,7 @@ func (c *threadSafeMap) updateIndices(oldObj interface{}, newObj interface{}, ke
 // key = 对象健
 // indexValue = 索引健名称
 // index = 索引健 -> 对象健的map
+// 将object key 添加到索引健与对象健的映射关系中
 func (c *threadSafeMap) addKeyToIndex(key, indexValue string, index Index) {
 	// set = 某个索引健的对象健集合
 	set := index[indexValue]
@@ -397,6 +407,7 @@ func (c *threadSafeMap) addKeyToIndex(key, indexValue string, index Index) {
 // key = 对象健
 // indexValue = 索引健名称
 // index = 索引健 -> 对象健的map
+// 将object key 从索引键与对象健的映射关系中删除
 func (c *threadSafeMap) deleteKeyFromIndex(key, indexValue string, index Index) {
 	// 获取indexValue索引健对应的所有对象健
 	// set = 某个索引健的对象健集合

@@ -153,10 +153,12 @@ var _ Store = &cache{}
 
 // Add inserts an item into the cache.
 func (c *cache) Add(obj interface{}) error {
+	// 计算对象的对象健
 	key, err := c.keyFunc(obj)
 	if err != nil {
 		return KeyError{obj, err}
 	}
+	// 将对象入缓存,同时还会更新索引
 	c.cacheStorage.Add(key, obj)
 	return nil
 }
@@ -194,6 +196,7 @@ func (c *cache) ListKeys() []string {
 }
 
 // GetIndexers returns the indexers of cache
+// 返回GetIndexers
 func (c *cache) GetIndexers() Indexers {
 	return c.cacheStorage.GetIndexers()
 }
@@ -204,11 +207,13 @@ func (c *cache) Index(indexName string, obj interface{}) ([]interface{}, error) 
 	return c.cacheStorage.Index(indexName, obj)
 }
 
+// 作用：返回某索引器下面，某个索引健对应的所有对象健集合
 func (c *cache) IndexKeys(indexName, indexKey string) ([]string, error) {
 	return c.cacheStorage.IndexKeys(indexName, indexKey)
 }
 
 // ListIndexFuncValues returns the list of generated values of an Index func
+// 传入索引名称，返回计算出来的索引健
 func (c *cache) ListIndexFuncValues(indexName string) []string {
 	return c.cacheStorage.ListIndexFuncValues(indexName)
 }
