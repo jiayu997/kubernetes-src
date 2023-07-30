@@ -71,6 +71,7 @@ func TestMultiIndexKeys(t *testing.T) {
 	index.Add(pod2)
 	index.Add(pod3)
 
+	// key = indexKey , value = object key list
 	expected := map[string]sets.String{}
 	expected["ernie"] = sets.NewString("one", "tre")
 	expected["bert"] = sets.NewString("one", "two")
@@ -80,6 +81,7 @@ func TestMultiIndexKeys(t *testing.T) {
 	{
 		for k, v := range expected {
 			found := sets.String{}
+			// index Results = object key list
 			indexResults, err := index.ByIndex("byUser", k)
 			if err != nil {
 				t.Errorf("Unexpected error %v", err)
@@ -87,6 +89,7 @@ func TestMultiIndexKeys(t *testing.T) {
 			for _, item := range indexResults {
 				found.Insert(item.(*v1.Pod).Name)
 			}
+			// check found whether all v
 			if !found.Equal(v) {
 				t.Errorf("missing items, index %s, expected %v but found %v", k, v.List(), found.List())
 			}

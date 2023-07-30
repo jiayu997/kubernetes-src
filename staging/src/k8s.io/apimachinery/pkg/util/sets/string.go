@@ -156,6 +156,7 @@ func (s1 String) IsSuperset(s2 String) bool {
 // Equal returns true if and only if s1 is equal (as a set) to s2.
 // Two sets are equal if their membership is identical.
 // (In practice, this means same elements, order doesn't matter)
+// 当s1和s2长度一致，且s2中每个元素s1都有
 func (s1 String) Equal(s2 String) bool {
 	return len(s1) == len(s2) && s1.IsSuperset(s2)
 }

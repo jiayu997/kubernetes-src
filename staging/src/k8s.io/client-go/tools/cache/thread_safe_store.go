@@ -105,6 +105,7 @@ func (c *threadSafeMap) Update(key string, obj interface{}) {
 	c.updateIndices(oldObject, obj, key)
 }
 
+// 将数据从缓存中删除，同时更新索引
 func (c *threadSafeMap) Delete(key string) {
 	c.lock.Lock()
 	defer c.lock.Unlock()

@@ -5,6 +5,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/cache"
 	"testing"
 )
@@ -91,7 +92,103 @@ func TestGetIndexFuncValues(t *testing.T) {
 		}
 	}
 }
-func TestMultiIndexKeys(t *testing.T) {}
+func TestMultiIndexKeys(t *testing.T) {
+	index := cache.NewIndexer(testKeyFunc, cache.Indexers{
+		cache.NamespaceIndex: cache.MetaNamespaceIndexFunc,
+		"label":              testLabelIndexFunc,
+	})
+
+	pod1 := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "one", Namespace: "ns1", Labels: map[string]string{"foo": "vlan"}}}
+	pod2 := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "two", Namespace: "ns1", Labels: map[string]string{"foo": "vlan"}}}
+	pod3 := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "three", Namespace: "ns2", Labels: map[string]string{"foo": "bgp"}}}
+	pod4 := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "four", Namespace: "ns2", Labels: map[string]string{"foo": "bgx"}}}
+
+	_ = index.Add(pod1)
+	_ = index.Add(pod2)
+	_ = index.Add(pod3)
+	_ = index.Add(pod4)
+
+	// 预期的索引健和对象健映射集合
+	expectIndexKeyObjectKeyMap := map[string]sets.String{}
+	expectIndexKeyObjectKeyMap["ns1"] = sets.NewString("ns1/one", "ns1/two")
+	expectIndexKeyObjectKeyMap["ns2"] = sets.NewString("ns2/three", "ns2/four")
+	expectIndexKeyObjectKeyMap["foo/vlan"] = sets.NewString("ns1/one", "ns1/two")
+	expectIndexKeyObjectKeyMap["foo/bgp"] = sets.NewString("ns2/three")
+	expectIndexKeyObjectKeyMap["foo/bgx"] = sets.NewString("ns2/four")
+
+	indexers := index.GetIndexers()
+	for indexName, indexFunc := range indexers {
+		_ = indexFunc
+		if indexName != cache.NamespaceIndex && indexName != "label" {
+			t.Errorf("indexName: %s not validate", indexName)
+		}
+		// 返回某个索引器下所有的索引健
+		indexKeys := index.ListIndexFuncValues(indexName)
+
+		// 拿到所有的索引健
+		for _, indexKey := range indexKeys {
+			// 根据索引名称、索引健获取到所有的object key List
+			objectKeys, err := index.IndexKeys(indexName, indexKey)
+			if err != nil {
+				t.Error(err.Error())
+			}
+			t.Logf("indexName: %s indexKey: %s objectKeys: %v", indexName, indexKey, objectKeys)
+		}
+	}
+	// 检查索引里面数据是否与预期数据相同
+	t.Log("now we start check data whether expect")
+	{
+		for _, indexName := range []string{"namespace", "label"} {
+			for indexKey, objectKeys := range expectIndexKeyObjectKeyMap {
+				found := sets.String{}
+				// 返回某个索引器某个索引健下面所有对象资源
+				objectList, err := index.ByIndex(indexName, indexKey)
+
+				// indexName: namespace indexKey: foo/bgx object List: []
+				// indexName: namespace indexKey: foo/bgp object List: []
+				if len(objectList) <= 0 {
+					continue
+				}
+				// t.Logf("indexName: %s indexKey: %s object List: %v", indexName, indexKey, objectList)
+				if err != nil {
+					t.Errorf(err.Error())
+				}
+				for _, object := range objectList {
+					namespace := object.(*v1.Pod).Namespace
+					name := object.(*v1.Pod).Name
+					found.Insert(namespace + "/" + name)
+				}
+				//t.Log(found.List())
+				// 如果found是否为objectKeys
+				if !found.Equal(objectKeys) {
+					t.Errorf("missing items, index %s, expected %v but found %v", indexKey, objectKeys.List(), found.List())
+				}
+				t.Logf("indexName: %s indexKey: %s objectList: %v", indexName, indexKey, found.List())
+			}
+		}
+	}
+
+	// 删除pod
+	_ = index.Delete(pod3)
+	_ = index.Delete(pod4)
+	t.Log("index delete pod3/pod4")
+	// 此时应该是
+	// namespace: index{"ns1": ["ns1/one","ns1/two"]}
+	// label: index{"foo/vlan": ["ns1/one","ns1/two"]}
+	ns1Pods, err := index.ByIndex("namespace", "ns1")
+	ns1PodsObjectKey := make([]string, 0)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err.Error())
+	}
+	for _, object := range ns1Pods {
+		namespace := object.(*v1.Pod).Namespace
+		name := object.(*v1.Pod).Name
+		ns1PodsObjectKey = append(ns1PodsObjectKey, namespace+"/"+name)
+	}
+	if len(ns1PodsObjectKey) != 0 {
+		t.Logf("indexName: namespace indexKey: ns1 objectKeys: %v", ns1PodsObjectKey)
+	}
+}
 
 func TestItems(t *testing.T) {
 	items := map[string]interface{}{}
