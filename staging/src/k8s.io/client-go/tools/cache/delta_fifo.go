@@ -242,11 +242,10 @@ func NewDeltaFIFOWithOptions(opts DeltaFIFOOptions) *DeltaFIFO {
 	}
 
 	f := &DeltaFIFO{
-		items:        map[string]Deltas{}, // 默认为空
-		queue:        []string{},          // 默认为空
-		keyFunc:      opts.KeyFunction,
-		knownObjects: opts.KnownObjects,
-
+		items:                 map[string]Deltas{}, // 默认为空
+		queue:                 []string{},          // 默认为空
+		keyFunc:               opts.KeyFunction,
+		knownObjects:          opts.KnownObjects,          // indexer本地缓存
 		emitDeltaTypeReplaced: opts.EmitDeltaTypeReplaced, // default=false
 	}
 	f.cond.L = &f.lock
@@ -650,6 +649,7 @@ func (f *DeltaFIFO) Pop(process PopProcessFunc) (interface{}, error) {
 		// 在HandleDeltas函数中，主要实现了二个功能：
 		// 1. 更新本地缓存
 		// 2. 分发事件到我们自定义的事件处理函数里面去
+		// item = Deltas
 		err := process(item)
 		if e, ok := err.(ErrRequeue); ok {
 			f.addIfNotPresent(id, item)

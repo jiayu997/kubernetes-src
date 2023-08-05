@@ -221,6 +221,7 @@ func (c *controller) processLoop() {
 		// 1. 更新本地缓存indexers
 		// 2. 分发事件到事件监听器上面,然后由监听器去执行我们自定义事件函数
 		// 3. c.config.Process并不是执行我们的自定义函数，而是封装了一层
+		// c.config.Process = func (s *sharedIndexInformer) HandleDeltas(obj interface{}) error {}
 		obj, err := c.config.Queue.Pop(PopProcessFunc(c.config.Process))
 		if err != nil {
 			if err == ErrFIFOClosed {

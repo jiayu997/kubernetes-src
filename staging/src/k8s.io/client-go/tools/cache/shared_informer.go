@@ -230,6 +230,7 @@ func NewSharedInformer(lw ListerWatcher, exampleObject runtime.Object, defaultEv
 // 这里主要是：staging/src/k8s.io/client-go/informers/apps/v1/deployment.go这里面的初始化的时候在调用,因为shareindexinfor是所有资源通用的
 // lw = 实例化 pod 类型的 list watcher 对象: cache.NewListWatchFromClient(clientset.CoreV1().RESTClient(), "pods", v1.NamespaceDefault, fields.Everything())
 // exampleObject  = &v1.pod{}
+// resyncPeriod = NewDeploymentInformer传递的同步时间
 func NewSharedIndexInformer(lw ListerWatcher, exampleObject runtime.Object, defaultEventHandlerResyncPeriod time.Duration, indexers Indexers) SharedIndexInformer {
 	realClock := &clock.RealClock{}
 	// shareIndexInformer 实现了ShareIndexInformer
@@ -394,6 +395,7 @@ type deleteNotification struct {
 	oldObj interface{}
 }
 
+// set error handler
 func (s *sharedIndexInformer) SetWatchErrorHandler(handler WatchErrorHandler) error {
 	s.startedLock.Lock()
 	defer s.startedLock.Unlock()
@@ -407,6 +409,7 @@ func (s *sharedIndexInformer) SetWatchErrorHandler(handler WatchErrorHandler) er
 }
 
 func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) {
+	// 创建一个协程，如果收到系统退出的信号就关闭队列
 	defer utilruntime.HandleCrash()
 
 	if s.HasStarted() {
@@ -530,6 +533,7 @@ func (s *sharedIndexInformer) GetController() Controller {
 
 // sharedIndexInformer 是支持动态添加 ResourceEventHandler 事件方法
 // 根据传入的 handler 对象构建 listener 监听器. 然后把监听器加到 listeners 数组里, 并启动 run 和 pop 两个协程
+// 主要用于注册用户自定义资源处理函数：informer.AddEventHandler(cache.ResourceEventHandlerFuncs{}
 func (s *sharedIndexInformer) AddEventHandler(handler ResourceEventHandler) {
 	s.AddEventHandlerWithResyncPeriod(handler, s.defaultEventHandlerResyncPeriod)
 }
@@ -603,13 +607,14 @@ func (s *sharedIndexInformer) AddEventHandlerWithResyncPeriod(handler ResourceEv
 
 	// 增加通知, s.indexer.List = 返回当前缓存中所有object的List
 	for _, item := range s.indexer.List() {
-		// 增加通知
+		// 增加通知，让目前增加的这个事件监听处理器去处理一下本地的缓存
 		listener.add(addNotification{newObj: item})
 	}
 }
 
 // obj = object
 // HandleDeltas 用来处理从 DeltaFIFO 拿到的 deltas 事件列表, 然后通知给所有的 lisenter 去处理
+// HandleDeltas主要是在Delta FIFO被Pop()时触发
 func (s *sharedIndexInformer) HandleDeltas(obj interface{}) error {
 	s.blockDeltas.Lock()
 	defer s.blockDeltas.Unlock()
@@ -716,11 +721,13 @@ func (p *sharedProcessor) distribute(obj interface{}, sync bool) {
 	if sync {
 		// 遍历同步类型监听器
 		for _, listener := range p.syncingListeners {
+			// 将事件分发到 p.nextCh中去处理
 			listener.add(obj)
 		}
 	} else {
 		// 遍历监听器
 		for _, listener := range p.listeners {
+			// 将事件分发到 p.nextCh中去处理
 			listener.add(obj)
 		}
 	}
@@ -756,8 +763,7 @@ func (p *sharedProcessor) run(stopCh <-chan struct{}) {
 	p.wg.Wait() // Wait for all .pop() and .run() to stop
 }
 
-// shouldResync queries every listener to determine if any of them need a resync, based on each
-// listener's resyncPeriod.
+// shouldResync queries every listener to determine if any of them need a resync, based on each listener's resyncPeriod.
 func (p *sharedProcessor) shouldResync() bool {
 	p.listenersLock.Lock()
 	defer p.listenersLock.Unlock()
@@ -767,8 +773,7 @@ func (p *sharedProcessor) shouldResync() bool {
 	resyncNeeded := false
 	now := p.clock.Now()
 	for _, listener := range p.listeners {
-		// need to loop through all the listeners to see if they need to resync so we can prepare any
-		// listeners that are going to be resyncing.
+		// need to loop through all the listeners to see if they need to resync so we can prepare any listeners that are going to be resyncing.
 		if listener.shouldResync(now) {
 			resyncNeeded = true
 			p.syncingListeners = append(p.syncingListeners, listener)
@@ -821,6 +826,7 @@ type processorListener struct {
 	// sharedIndexInformer starts and (b) only if the informer does
 	// resyncs at all.
 	requestedResyncPeriod time.Duration
+
 	// resyncPeriod is the threshold that will be used in the logic
 	// for this listener.  This value differs from
 	// requestedResyncPeriod only when the sharedIndexInformer does
@@ -829,8 +835,10 @@ type processorListener struct {
 	// sharedProcessor's `shouldResync` function is invoked and when
 	// the sharedIndexInformer processes `Sync` type Delta objects.
 	resyncPeriod time.Duration
+
 	// nextResync is the earliest time the listener should get a full resync
 	nextResync time.Time
+
 	// resyncLock guards access to resyncPeriod and nextResync
 	resyncLock sync.Mutex
 }
@@ -841,8 +849,8 @@ func newProcessListener(handler ResourceEventHandler, requestedResyncPeriod, res
 		addCh:                 make(chan interface{}),
 		handler:               handler,                            // 我们自定义事件处理函数
 		pendingNotifications:  *buffer.NewRingGrowing(bufferSize), // default 1024
-		requestedResyncPeriod: requestedResyncPeriod,
-		resyncPeriod:          resyncPeriod,
+		requestedResyncPeriod: requestedResyncPeriod,              // NewDeploymentInformer传递的时间
+		resyncPeriod:          resyncPeriod,                       // NewDeploymentInformer
 	}
 
 	ret.determineNextResync(now)
@@ -867,7 +875,8 @@ func (p *processorListener) pop() {
 		select {
 		// 把从addCh获取的对象扔到nextCh里
 		// 这里丢到nextCh后，(p *processorListener) run() 就会去处理这个管道里面的数据
-		case nextCh <- notification: // 这里相当于已经分发了事件
+		// 当nextCh未初始化时这里不会触发,nextCh = nil
+		case nextCh <- notification: // 这里相当于已经分发了事件,让 (p *processorListener) run()去处理
 			// Notification dispatched
 			var ok bool
 			// 从环形队列中获取一个object(由于已经处理了一个事件，这里再去获取事件)
@@ -888,9 +897,10 @@ func (p *processorListener) pop() {
 			if notification == nil { // No notification to pop (and pendingNotifications is empty)
 				// Optimize the case - skip adding to pendingNotifications
 				notification = notificationToAdd
-				// 这里相当于初始化了, nextCh变成非空了
+				// 这里相当于初始化了, nextCh变成非空了,我们这里操作nextCh就是操作p.nextCh
 				nextCh = p.nextCh
 			} else { // There is already a notification waiting to be dispatched
+				// 这里要获取到第二个事件后，缓存就会有数据了
 				p.pendingNotifications.WriteOne(notificationToAdd)
 			}
 		}
@@ -927,8 +937,8 @@ func (p *processorListener) run() {
 	}, 1*time.Second, stopCh)
 }
 
-// shouldResync deterimines if the listener needs a resync. If the listener's resyncPeriod is 0,
-// this always returns false.
+// shouldResync deterimines if the listener needs a resync. If the listener's resyncPeriod is 0, this always returns false.
+// 当前时间晚于或者等于下次同步时间时返回true
 func (p *processorListener) shouldResync(now time.Time) bool {
 	p.resyncLock.Lock()
 	defer p.resyncLock.Unlock()
@@ -944,6 +954,7 @@ func (p *processorListener) determineNextResync(now time.Time) {
 	p.resyncLock.Lock()
 	defer p.resyncLock.Unlock()
 
+	// 设置下次同步时间
 	p.nextResync = now.Add(p.resyncPeriod)
 }
 
@@ -951,5 +962,6 @@ func (p *processorListener) setResyncPeriod(resyncPeriod time.Duration) {
 	p.resyncLock.Lock()
 	defer p.resyncLock.Unlock()
 
+	// 设置同步的周期
 	p.resyncPeriod = resyncPeriod
 }

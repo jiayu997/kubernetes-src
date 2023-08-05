@@ -168,6 +168,7 @@ func (f *sharedInformerFactory) Start(stopCh <-chan struct{}) {
 			// 调用：staging/src/k8s.io/client-go/tools/cache/shared_informer.go
 			// func (s *sharedIndexInformer) Run(stopCh <-chan struct{})
 			// 初始化Delta FIFO & Controller
+			// 启动shareindexinformer
 			go informer.Run(stopCh)
 			f.startedInformers[informerType] = true
 		}
@@ -198,7 +199,8 @@ func (f *sharedInformerFactory) WaitForCacheSync(stopCh <-chan struct{}) map[ref
 
 // InternalInformerFor returns the SharedIndexInformer for obj using an internal client.
 // obj = &appsv1.Deployment{}
-// newFunc = cache.SharedIndexInformer
+// newFunc = cache.SharedIndexInformer 返回一个初始化shareindexinformer函数
+// newFunc = staging/src/k8s.io/client-go/informers/apps/v1/deployment.go 中 func (f *deploymentInformer) defaultInformer(client kubernetes.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {}
 func (f *sharedInformerFactory) InformerFor(obj runtime.Object, newFunc internalinterfaces.NewInformerFunc) cache.SharedIndexInformer {
 	f.lock.Lock()
 	defer f.lock.Unlock()
