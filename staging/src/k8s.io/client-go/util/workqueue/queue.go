@@ -23,6 +23,7 @@ import (
 	"k8s.io/utils/clock"
 )
 
+// 通用队列的接口
 type Interface interface {
 	Add(item interface{})
 	Len() int
@@ -73,15 +74,18 @@ type Type struct {
 	// queue defines the order in which we will work on items. Every
 	// element of queue should be in the dirty set and not in the
 	// processing set.
+	// workqueue正在存储数据
 	queue []t
 
 	// dirty defines all of the items that need to be processed.
+	// 用于定义需要处理的数据
 	dirty set
 
 	// Things that are currently being processed are in the processing set.
 	// These things may be simultaneously in the dirty set. When we finish
 	// processing something and remove it from this set, we'll check if
 	// it's in the dirty set, and if so, add it to the queue.
+	// 正在处理的一个集合
 	processing set
 
 	cond *sync.Cond
@@ -89,6 +93,7 @@ type Type struct {
 	shuttingDown bool
 	drain        bool
 
+	// 指标
 	metrics queueMetrics
 
 	unfinishedWorkUpdatePeriod time.Duration
@@ -123,17 +128,23 @@ func (q *Type) Add(item interface{}) {
 	if q.shuttingDown {
 		return
 	}
+	// 判断添加的数据是否在脏数据集合中
+	// 这里实现了去重(queue是[]类型无法去重效果为O(n))
 	if q.dirty.has(item) {
 		return
 	}
 
 	q.metrics.add(item)
 
+	// 添加到脏数据集合中
 	q.dirty.insert(item)
+
+	// 判断数据是否正在处理
 	if q.processing.has(item) {
 		return
 	}
 
+	// 将数据添加到queue中
 	q.queue = append(q.queue, item)
 	q.cond.Signal()
 }
@@ -153,14 +164,19 @@ func (q *Type) Len() int {
 func (q *Type) Get() (item interface{}, shutdown bool) {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
+
+	// 当队列长度为0且为关闭时
 	for len(q.queue) == 0 && !q.shuttingDown {
 		q.cond.Wait()
 	}
+
+	// 队列长度为0
 	if len(q.queue) == 0 {
 		// We must be shutting down.
 		return nil, true
 	}
 
+	// 取出队列的第一个元素
 	item = q.queue[0]
 	// The underlying array still exists and reference this object, so the object will not be garbage collected.
 	q.queue[0] = nil
@@ -168,7 +184,10 @@ func (q *Type) Get() (item interface{}, shutdown bool) {
 
 	q.metrics.get(item)
 
+	// 将数据添加到正在处理队列中
 	q.processing.insert(item)
+
+	// 将数据从脏数据中删除
 	q.dirty.delete(item)
 
 	return item, false
@@ -177,14 +196,19 @@ func (q *Type) Get() (item interface{}, shutdown bool) {
 // Done marks item as done processing, and if it has been marked as dirty again
 // while it was being processed, it will be re-added to the queue for
 // re-processing.
+// 标志item已经处理完成
 func (q *Type) Done(item interface{}) {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
 
 	q.metrics.done(item)
 
+	// 数据处理完成，删除item
 	q.processing.delete(item)
+
+	// 脏数据还有item
 	if q.dirty.has(item) {
+		// 重新添加到队列中去
 		q.queue = append(q.queue, item)
 		q.cond.Signal()
 	} else if q.processing.len() == 0 {
@@ -218,6 +242,7 @@ func (q *Type) ShutDownWithDrain() {
 
 // isProcessing indicates if there are still items on the work queue being
 // processed. It's used to drain the work queue on an eventual shutdown.
+// 判断是否有正在被处理的元素
 func (q *Type) isProcessing() bool {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
@@ -226,6 +251,7 @@ func (q *Type) isProcessing() bool {
 
 // waitForProcessing waits for the worker goroutines to finish processing items
 // and call Done on them.
+// 等待数据被处理完
 func (q *Type) waitForProcessing() {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
@@ -239,18 +265,21 @@ func (q *Type) waitForProcessing() {
 	q.cond.Wait()
 }
 
+// 设置drain
 func (q *Type) setDrain(shouldDrain bool) {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
 	q.drain = shouldDrain
 }
 
+// 返回drain标志
 func (q *Type) shouldDrain() bool {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
 	return q.drain
 }
 
+// 关闭队列
 func (q *Type) shutdown() {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
@@ -258,6 +287,7 @@ func (q *Type) shutdown() {
 	q.cond.Broadcast()
 }
 
+// 判断队列是否关闭
 func (q *Type) ShuttingDown() bool {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
