@@ -29,6 +29,7 @@ import (
 // requeue items after failures without ending up in a hot-loop.
 type DelayingInterface interface {
 	Interface
+
 	// AddAfter adds an item to the workqueue after the indicated duration has passed
 	AddAfter(item interface{}, duration time.Duration)
 }
@@ -78,6 +79,7 @@ type delayingType struct {
 
 	// stopCh lets us signal a shutdown to the waiting loop
 	stopCh chan struct{}
+
 	// stopOnce guarantees we only signal shutdown a single time
 	stopOnce sync.Once
 
@@ -93,8 +95,11 @@ type delayingType struct {
 
 // waitFor holds the data to add and the time it should be added
 type waitFor struct {
-	data    t
+	data t // 实际添加的数据
+
+	// 什么时候添加的
 	readyAt time.Time
+
 	// index in the priority queue (heap)
 	index int
 }
@@ -166,6 +171,7 @@ func (q *delayingType) AddAfter(item interface{}, duration time.Duration) {
 	q.metrics.retry()
 
 	// immediately add things with no delay
+	// 直接入队列
 	if duration <= 0 {
 		q.Add(item)
 		return
@@ -196,6 +202,7 @@ func (q *delayingType) waitingLoop() {
 	waitingForQueue := &waitForPriorityQueue{}
 	heap.Init(waitingForQueue)
 
+	// 用来避免元素重复添加
 	waitingEntryByData := map[t]*waitFor{}
 
 	for {
