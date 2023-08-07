@@ -161,6 +161,10 @@ func (q *Type) Len() int {
 // Get blocks until it can return an item to be processed. If shutdown = true,
 // the caller should end their goroutine. You must call Done with item when you
 // have finished processing it.
+
+// 1. Get 会将item从Queue取出
+// 2. 将item放入正在处理队列中
+// 3. 将数据从脏数据中删除
 func (q *Type) Get() (item interface{}, shutdown bool) {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
@@ -197,6 +201,7 @@ func (q *Type) Get() (item interface{}, shutdown bool) {
 // while it was being processed, it will be re-added to the queue for
 // re-processing.
 // 标志item已经处理完成
+// 将数据从processing中去掉
 func (q *Type) Done(item interface{}) {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
@@ -218,6 +223,8 @@ func (q *Type) Done(item interface{}) {
 
 // ShutDown will cause q to ignore all new items added to it and
 // immediately instruct the worker goroutines to exit.
+
+// 仅仅是关闭，不会等待数据处理完成
 func (q *Type) ShutDown() {
 	q.setDrain(false)
 	q.shutdown()
@@ -232,10 +239,15 @@ func (q *Type) ShutDown() {
 // indefinitely. It is, however, safe to call ShutDown after having called
 // ShutDownWithDrain, as to force the queue shut down to terminate immediately
 // without waiting for the drainage.
+
+// 设置drain标志，设置关闭标志
+// 等待数据处理完成
 func (q *Type) ShutDownWithDrain() {
 	q.setDrain(true)
 	q.shutdown()
+	// 当数据在被处理，且应该被驱逐
 	for q.isProcessing() && q.shouldDrain() {
+		// 等待处理完成
 		q.waitForProcessing()
 	}
 }
