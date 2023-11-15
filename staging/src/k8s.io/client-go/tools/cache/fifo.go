@@ -85,10 +85,10 @@ type Queue interface {
 // unless you really really really really know what you are doing.
 func Pop(queue Queue) interface{} {
 	var result interface{}
-	queue.Pop(func(obj interface{}) error {
-		result = obj
-		return nil
-	})
+	// switch obj := Pop(f).(testFifoObject).val.(type) {
+	// Pop(f) => f.Pop(func())
+	// f.Pop取出一个object后放入func
+	queue.Pop(func(obj interface{}) error { result = obj; return nil })
 	return result
 }
 

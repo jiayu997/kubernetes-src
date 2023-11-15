@@ -37,6 +37,7 @@ func mkFifoObj(name string, val interface{}) testFifoObject {
 	return testFifoObject{name: name, val: val}
 }
 
+// 验证入队列/出队列
 func TestFIFO_basic(t *testing.T) {
 	f := NewFIFO(testFifoObjectKeyFunc)
 	const amount = 500
@@ -54,6 +55,7 @@ func TestFIFO_basic(t *testing.T) {
 	lastInt := int(0)
 	lastUint := uint64(0)
 	for i := 0; i < amount*2; i++ {
+		// 类型断言
 		switch obj := Pop(f).(testFifoObject).val.(type) {
 		case int:
 			if obj <= lastInt {
@@ -75,16 +77,20 @@ func TestFIFO_basic(t *testing.T) {
 func TestFIFO_requeueOnPop(t *testing.T) {
 	f := NewFIFO(testFifoObjectKeyFunc)
 
+	// 入队列后，马上取出，但是执行用户自定义pop后处理函数失败，导致重新入队列
 	f.Add(mkFifoObj("foo", 10))
 	_, err := f.Pop(func(obj interface{}) error {
 		if obj.(testFifoObject).name != "foo" {
 			t.Fatalf("unexpected object: %#v", obj)
 		}
+		// 导致重新入队列
 		return ErrRequeue{Err: nil}
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
+	// 通过object key去查object 是否存在
 	if _, ok, err := f.GetByKey("foo"); !ok || err != nil {
 		t.Fatalf("object should have been requeued: %t %v", ok, err)
 	}
@@ -93,11 +99,13 @@ func TestFIFO_requeueOnPop(t *testing.T) {
 		if obj.(testFifoObject).name != "foo" {
 			t.Fatalf("unexpected object: %#v", obj)
 		}
+		// 导致重新入队列
 		return ErrRequeue{Err: fmt.Errorf("test error")}
 	})
 	if err == nil || err.Error() != "test error" {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if _, ok, err := f.GetByKey("foo"); !ok || err != nil {
 		t.Fatalf("object should have been requeued: %t %v", ok, err)
 	}
@@ -106,6 +114,7 @@ func TestFIFO_requeueOnPop(t *testing.T) {
 		if obj.(testFifoObject).name != "foo" {
 			t.Fatalf("unexpected object: %#v", obj)
 		}
+		// 自定义函数返回!= nil pop正常
 		return nil
 	})
 	if err != nil {
@@ -121,6 +130,7 @@ func TestFIFO_addUpdate(t *testing.T) {
 	f.Add(mkFifoObj("foo", 10))
 	f.Update(mkFifoObj("foo", 15))
 
+	// 对于array、slice、map、struct等类型，想要比较两个值是否相等，不能使用==，处理起来十分麻烦，在对效率没有太大要求的情况下，reflect包中的DeepEqual函数完美的解决了比较问题
 	if e, a := []interface{}{mkFifoObj("foo", 15)}, f.List(); !reflect.DeepEqual(e, a) {
 		t.Errorf("Expected %+v, got %+v", e, a)
 	}
@@ -176,17 +186,22 @@ func TestFIFO_addReplace(t *testing.T) {
 	}
 }
 
+// 测试Pop的过程中，存在添加/更新Object
 func TestFIFO_detectLineJumpers(t *testing.T) {
 	f := NewFIFO(testFifoObjectKeyFunc)
 
 	f.Add(mkFifoObj("foo", 10))
 	f.Add(mkFifoObj("bar", 1))
+	// 这个是重复的,因为object key计算出来一致, 这里相当于更新object
 	f.Add(mkFifoObj("foo", 11))
+	// 这个是重复的,因为object key计算出来一致, 这里相当于更新object
 	f.Add(mkFifoObj("foo", 13))
 	f.Add(mkFifoObj("zab", 30))
 
 	if e, a := 13, Pop(f).(testFifoObject).val; a != e {
 		t.Fatalf("expected %d, got %d", e, a)
+	} else {
+		t.Log(a, e)
 	}
 
 	f.Add(mkFifoObj("foo", 14)) // ensure foo doesn't jump back in line
@@ -204,6 +219,7 @@ func TestFIFO_detectLineJumpers(t *testing.T) {
 	}
 }
 
+// 测试在items中不存在的objectkey
 func TestFIFO_addIfNotPresent(t *testing.T) {
 	f := NewFIFO(testFifoObjectKeyFunc)
 
@@ -282,6 +298,8 @@ func TestFIFO_HasSynced(t *testing.T) {
 
 // TestFIFO_PopShouldUnblockWhenClosed checks that any blocking Pop on an empty queue
 // should unblock and return after Close is called.
+
+// 测试fifo close后，能正常pop(即使返回错误)
 func TestFIFO_PopShouldUnblockWhenClosed(t *testing.T) {
 	f := NewFIFO(testFifoObjectKeyFunc)
 
