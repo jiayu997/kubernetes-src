@@ -26,10 +26,9 @@ import (
 // Store is a generic object storage and processing interface.  A
 // Store holds a map from string keys to accumulators, and has
 // operations to add, update, and delete a given object to/from the
-// accumulator currently associated with a given key.  A Store also
-// knows how to extract the key from a given object, so many operations
-// are given only the object.
-//
+// accumulator currently associated with a given key.
+
+// A Store also knows how to extract the key from a given object, so many operations are given only the object.
 // In the simplest Store implementations each accumulator is simply
 // the last given object, or empty after Delete, and thus the Store's
 // behavior is simple storage.
@@ -91,6 +90,7 @@ func (k KeyError) Unwrap() error {
 
 // ExplicitKey can be passed to MetaNamespaceKeyFunc if you have the key for
 // the object but not the object itself.
+// 当我们传入object key时，会返回object key
 type ExplicitKey string
 
 // MetaNamespaceKeyFunc is a convenient default KeyFunc which knows how to make
@@ -100,6 +100,8 @@ type ExplicitKey string
 //
 // TODO: replace key-as-string with a key-as-struct so that this
 // packing/unpacking won't be necessary.
+
+// MetaNamespaceKeyFunc object 计算函数
 func MetaNamespaceKeyFunc(obj interface{}) (string, error) {
 	if key, ok := obj.(ExplicitKey); ok {
 		return string(key), nil
@@ -123,6 +125,8 @@ func MetaNamespaceKeyFunc(obj interface{}) (string, error) {
 //
 // TODO: replace key-as-string with a key-as-struct so that this
 // packing/unpacking won't be necessary.
+
+// SplitMetaNamespaceKey  返回object_name和object_key
 func SplitMetaNamespaceKey(key string) (namespace, name string, err error) {
 	parts := strings.Split(key, "/")
 	switch len(parts) {

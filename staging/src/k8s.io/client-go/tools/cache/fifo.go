@@ -44,8 +44,7 @@ func (e ErrRequeue) Error() string {
 	return e.Err.Error()
 }
 
-// Queue extends Store with a collection of Store keys to "process".
-// Every Add, Update, or Delete may put the object's key in that collection.
+// Queue extends Store with a collection of Store keys to "process". Every Add, Update, or Delete may put the object's key in that collection.
 // A Queue has a way to derive the corresponding key given an accumulator.
 // A Queue can be accessed concurrently from multiple goroutines.
 // A Queue can be "closed", after which Pop operations return an error.
@@ -63,6 +62,7 @@ type Queue interface {
 	// of the atomic processing and (b) return the inner error from
 	// Pop.
 	// popProcessFunc 主要用于元素pop弹出后，由这个函数来处理
+	// Pop函数会一直阻塞，知道关闭或有东西进来了
 	Pop(PopProcessFunc) (interface{}, error)
 
 	// AddIfNotPresent puts the given accumulator into the Queue (in
@@ -126,9 +126,11 @@ type FIFO struct {
 
 	// populated is true if the first batch of items inserted by Replace() has been populated
 	// or Delete/Add/Update was called first.
+	// 添加/删除/更新后会置为true
 	populated bool
 
 	// initialPopulationCount is the number of items inserted by the first call of Replace()
+	// 填充到队列的数量
 	initialPopulationCount int
 
 	// keyFunc is used to make the key used for queued item insertion and retrieval, and should be deterministic.
@@ -167,7 +169,7 @@ func (f *FIFO) HasSynced() bool {
 // Add inserts an item, and puts it in the queue. The item is only enqueued
 // if it doesn't already exist in the set.
 
-// add 实际上是包含了更新逻辑
+// Add add 实际上是包含了更新逻辑, 如果后边的对象部分字段一样，最后会被更新的
 func (f *FIFO) Add(obj interface{}) error {
 	// 基于obj计算出key
 	id, err := f.keyFunc(obj)
@@ -247,7 +249,7 @@ func (f *FIFO) Delete(obj interface{}) error {
 }
 
 // List returns a list of all the items.
-// 返回items 列表
+// 返回items列表 ， 即object List
 func (f *FIFO) List() []interface{} {
 	f.lock.RLock()
 	defer f.lock.RUnlock()
@@ -260,7 +262,7 @@ func (f *FIFO) List() []interface{} {
 
 // ListKeys returns a list of all the keys of the objects currently
 // in the FIFO.
-// 返回所有的key切片
+// 返回所有的key切片 即 object-key
 func (f *FIFO) ListKeys() []string {
 	f.lock.RLock()
 	defer f.lock.RUnlock()
@@ -334,6 +336,7 @@ func (f *FIFO) Pop(process PopProcessFunc) (interface{}, error) {
 
 		// 执行pop之后的，用户自定义处理函数，把这个obj传递进去了
 		err := process(item)
+		// 队列入失败了，重录
 		if e, ok := err.(ErrRequeue); ok {
 			f.addIfNotPresent(id, item)
 			err = e.Err
@@ -347,6 +350,7 @@ func (f *FIFO) Pop(process PopProcessFunc) (interface{}, error) {
 // 'f' takes ownership of the map, you should not reference the map again
 // after calling this function. f's queue is reset, too; upon return, it
 // will contain the items in the map, in no particular order.
+// 将list的 [string]{} 同步过来
 func (f *FIFO) Replace(list []interface{}, resourceVersion string) error {
 	// 基于replace传递过来的 list切片，重新构建一个新的items
 	items := make(map[string]interface{}, len(list))
@@ -392,6 +396,8 @@ func (f *FIFO) Resync() error {
 
 	// 构建一个sets
 	inQueue := sets.NewString()
+
+	// 遍历queue中的object key
 	for _, id := range f.queue {
 		inQueue.Insert(id)
 	}

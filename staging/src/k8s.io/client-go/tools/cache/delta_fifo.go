@@ -36,6 +36,7 @@ type DeltaFIFOOptions struct {
 	// exposed in the returned DeltaFIFO's KeyOf() method, with additional
 	// handling around deleted objects and queue state).
 	// Optional, the default is MetaNamespaceKeyFunc.
+	// 用这个函数计算出object key
 	KeyFunction KeyFunc
 
 	// KnownObjects is expected to return a list of keys that the consumer of
@@ -55,8 +56,9 @@ type DeltaFIFOOptions struct {
 
 // DeltaFIFO is like FIFO, but differs in two ways.  One is that the
 // accumulator associated with a given object's key is not that object
-// but rather a Deltas, which is a slice of Delta values for that
-// object.  Applying an object to a Deltas means to append a Delta
+// but rather a Deltas
+
+// which is a slice of Delta values for that object.  Applying an object to a Deltas means to append a Delta
 // except when the potentially appended Delta is a Deleted and the
 // Deltas already ends with a Deleted.  In that case the Deltas does
 // not grow, although the terminal Deleted will be replaced by the new
@@ -95,7 +97,7 @@ type DeltaFIFOOptions struct {
 // threads, you could end up with multiple threads processing slightly
 // different versions of the same object.
 
-// DeltaFIFO是K8s中用来存储处理数据的Queue，相较于传统的FIFO,它不仅仅存储了数据保证了先进先出，而且存储有K8s 资源对象的类型。其是连接Reflector(生产者)和indexer(消费者)的重要通道
+// DeltaFIFO DeltaFIFO是K8s中用来存储处理数据的Queue，相较于传统的FIFO,它不仅仅存储了数据保证了先进先出，而且存储有K8s 资源对象的类型。其是连接Reflector(生产者)和indexer(消费者)的重要通道
 // DeltaFIFO 实现了Store和Queue
 type DeltaFIFO struct {
 	// lock/cond protects access to 'items' and 'queue'.
@@ -125,8 +127,7 @@ type DeltaFIFO struct {
 	// insertion and retrieval, and should be deterministic.
 	keyFunc KeyFunc
 
-	// knownObjects list keys that are "known" --- affecting Delete(),
-	// Replace(), and Resync()
+	// knownObjects list keys that are "known" --- affecting Delete(), Replace(), and Resync()
 	// 是后面的indexer
 	knownObjects KeyListerGetter
 
