@@ -106,6 +106,7 @@ type RESTClient struct {
 
 // NewRESTClient creates a new RESTClient. This client performs generic REST functions
 // such as Get, Put, Post, and Delete on specified paths.
+// 生成一个RESTCLIENT
 func NewRESTClient(baseURL *url.URL, versionedAPIPath string, config ClientContentConfig, rateLimiter flowcontrol.RateLimiter, client *http.Client) (*RESTClient, error) {
 	if len(config.ContentType) == 0 {
 		config.ContentType = "application/json"
@@ -119,13 +120,15 @@ func NewRESTClient(baseURL *url.URL, versionedAPIPath string, config ClientConte
 	base.Fragment = ""
 
 	return &RESTClient{
-		base:             &base,
+		// apiserver
+		base: &base,
+		//  /apis/GROUP/VERSION/RESOURCETYPE/NAME之类的
 		versionedAPIPath: versionedAPIPath,
+		// 可接受数据类型
 		content:          config,
 		createBackoffMgr: readExpBackoffConfig,
 		rateLimiter:      rateLimiter,
-
-		Client: client,
+		Client:           client,
 	}, nil
 }
 
@@ -170,6 +173,7 @@ func readExpBackoffConfig() BackoffManager {
 // if err != nil { ... }
 // list, ok := resp.(*api.PodList)
 func (c *RESTClient) Verb(verb string) *Request {
+	// 构建请求 NewRequest(c) = staging/src/k8s.io/client-go/rest/request.go:95
 	return NewRequest(c).Verb(verb)
 }
 
@@ -189,6 +193,7 @@ func (c *RESTClient) Patch(pt types.PatchType) *Request {
 }
 
 // Get begins a GET request. Short for c.Verb("GET").
+// GET请求
 func (c *RESTClient) Get() *Request {
 	return c.Verb("GET")
 }

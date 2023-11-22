@@ -127,6 +127,7 @@ type Request struct {
 }
 
 // NewRequest creates a new request helper object for accessing runtime.Objects on a server.
+// 这个是真正的请求体
 func NewRequest(c *RESTClient) *Request {
 	var backoff BackoffManager
 	if c.createBackoffMgr != nil {
@@ -180,6 +181,7 @@ func NewRequestWithClient(base *url.URL, versionedAPIPath string, content Client
 
 // Verb sets the verb this request will use.
 func (r *Request) Verb(verb string) *Request {
+	// 设置请求的动作
 	r.verb = verb
 	return r
 }
@@ -206,6 +208,7 @@ func (r *Request) Suffix(segments ...string) *Request {
 }
 
 // Resource sets the resource to access (<resource>/[ns/<namespace>/]<name>)
+// 设置资源类型,例如：deployments
 func (r *Request) Resource(resource string) *Request {
 	if r.err != nil {
 		return r
@@ -269,6 +272,7 @@ func (r *Request) SubResource(subresources ...string) *Request {
 }
 
 // Name sets the name of a resource to access (<resource>/[ns/<namespace>/]<name>)
+// 设置某个资源下的具体对象，例如 deployments/deploymentA
 func (r *Request) Name(resourceName string) *Request {
 	if r.err != nil {
 		return r
@@ -290,6 +294,7 @@ func (r *Request) Name(resourceName string) *Request {
 }
 
 // Namespace applies the namespace scope to a request (<resource>/[ns/<namespace>/]<name>)
+// 设置资源的Namespace
 func (r *Request) Namespace(namespace string) *Request {
 	if r.err != nil {
 		return r
@@ -365,6 +370,7 @@ func (r *Request) Param(paramName, s string) *Request {
 // to the request. Use this to provide versioned query parameters from client libraries.
 // VersionedParams will not write query parameters that have omitempty set and are empty. If a
 // parameter has already been set it is appended to (Params and VersionedParams are additive).
+// 设置list options和编码规范
 func (r *Request) VersionedParams(obj runtime.Object, codec runtime.ParameterCodec) *Request {
 	return r.SpecificallyVersionedParams(obj, codec, r.c.content.GroupVersion)
 }
@@ -1066,6 +1072,8 @@ func (r *Request) request(ctx context.Context, fn func(*http.Request, *http.Resp
 // Error type:
 //   - If the server responds with a status: *errors.StatusError or *errors.UnexpectedObjectError
 //   - http.Client.Do errors are returned directly.
+//
+// 构建真正的请求，并返回结果
 func (r *Request) Do(ctx context.Context) Result {
 	var result Result
 	err := r.request(ctx, func(req *http.Request, resp *http.Response) {
@@ -1299,6 +1307,7 @@ func retryAfterSeconds(resp *http.Response) (int, bool) {
 }
 
 // Result contains the result of calling Request.Do().
+// 返回的结果结构体
 type Result struct {
 	body        []byte
 	warnings    []net.WarningHeader

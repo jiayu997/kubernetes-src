@@ -80,15 +80,20 @@ func NewForConfig(c *rest.Config) (*AppsV1Client, error) {
 // NewForConfigAndClient creates a new AppsV1Client for the given config and http client.
 // Note the http client provided takes precedence over the configured transport values.
 func NewForConfigAndClient(c *rest.Config, h *http.Client) (*AppsV1Client, error) {
+	// 这里进行了一次全新的赋值，修改config不会影响到上一层
 	config := *c
+
+	// 设置访问API SERVER时的GVK/编码规则/API PATH
 	if err := setConfigDefaults(&config); err != nil {
 		return nil, err
 	}
+
 	// 初始化reset client
 	client, err := rest.RESTClientForConfigAndClient(&config, h)
 	if err != nil {
 		return nil, err
 	}
+
 	return &AppsV1Client{client}, nil
 }
 
@@ -107,12 +112,17 @@ func New(c rest.Interface) *AppsV1Client {
 	return &AppsV1Client{c}
 }
 
+// 设置访问API SERVER时的GVK和编码规则
 func setConfigDefaults(config *rest.Config) error {
 	gv := v1.SchemeGroupVersion
+	// 设置GV
 	config.GroupVersion = &gv
+	// 设置APT PATH
 	config.APIPath = "/apis"
+	// 设置编码
 	config.NegotiatedSerializer = scheme.Codecs.WithoutConversion()
 
+	// 设置USER Agent
 	if config.UserAgent == "" {
 		config.UserAgent = rest.DefaultKubernetesUserAgent()
 	}

@@ -68,6 +68,7 @@ func DefaultVersionedAPIPath(apiPath string, groupVersion schema.GroupVersion) s
 
 	// Add the version to the end of the path
 	if len(groupVersion.Group) > 0 {
+		// /apis/GROUP/VERSION/RESOURCETYPE/NAM
 		versionedAPIPath = path.Join(versionedAPIPath, groupVersion.Group, groupVersion.Version)
 
 	} else {

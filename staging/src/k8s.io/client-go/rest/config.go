@@ -283,21 +283,25 @@ func (c TLSClientConfig) String() string {
 type ContentConfig struct {
 	// AcceptContentTypes specifies the types the client will accept and is optional.
 	// If not set, ContentType will be used to define the Accept header
+	// 可接受数据类型, 可选参数
 	AcceptContentTypes string
 	// ContentType specifies the wire format used to communicate with the server.
 	// This value will be set as the Accept header on requests made to the server, and
 	// as the default content type on any object sent to the server. If not set,
 	// "application/json" is used.
+	// 发送的数据类型, 可选参数
 	ContentType string
 	// GroupVersion is the API version to talk to. Must be provided when initializing
 	// a RESTClient directly. When initializing a Client, will be set with the default
 	// code version.
+	// 设置GV
 	GroupVersion *schema.GroupVersion
 	// NegotiatedSerializer is used for obtaining encoders and decoders for multiple
 	// supported media types.
 	//
 	// TODO: NegotiatedSerializer will be phased out as internal clients are removed
 	//   from Kubernetes.
+	// 编码设置
 	NegotiatedSerializer runtime.NegotiatedSerializer
 }
 
@@ -322,6 +326,7 @@ func RESTClientFor(config *Config) (*RESTClient, error) {
 		return nil, err
 	}
 
+	// 生成HTTPClient
 	httpClient, err := HTTPClientFor(config)
 	if err != nil {
 		return nil, err
@@ -350,6 +355,7 @@ func RESTClientForConfigAndClient(config *Config, httpClient *http.Client) (*RES
 		return nil, err
 	}
 
+	// 限制客户端连接API Server的数量
 	rateLimiter := config.RateLimiter
 	if rateLimiter == nil {
 		qps := config.QPS
@@ -369,13 +375,18 @@ func RESTClientForConfigAndClient(config *Config, httpClient *http.Client) (*RES
 	if config.GroupVersion != nil {
 		gv = *config.GroupVersion
 	}
+	// client数据类型设置
 	clientContent := ClientContentConfig{
+		// 可选参数
 		AcceptContentTypes: config.AcceptContentTypes,
-		ContentType:        config.ContentType,
-		GroupVersion:       gv,
-		Negotiator:         runtime.NewClientNegotiator(config.NegotiatedSerializer, gv),
+		// 可选参数
+		ContentType:  config.ContentType,
+		GroupVersion: gv,
+		Negotiator:   runtime.NewClientNegotiator(config.NegotiatedSerializer, gv),
 	}
 
+	// 使用api路径/gv等待创建一个resetClient
+	// versionedAPIPath =  /apis/GROUP/VERSION/RESOURCETYPE/NAME 之类的
 	restClient, err := NewRESTClient(baseURL, versionedAPIPath, clientContent, rateLimiter, httpClient)
 	if err == nil && config.WarningHandler != nil {
 		restClient.warningHandler = config.WarningHandler
@@ -437,10 +448,12 @@ func UnversionedRESTClientForConfigAndClient(config *Config, httpClient *http.Cl
 		gv = *config.GroupVersion
 	}
 	clientContent := ClientContentConfig{
+		// 可选参数
 		AcceptContentTypes: config.AcceptContentTypes,
-		ContentType:        config.ContentType,
-		GroupVersion:       gv,
-		Negotiator:         runtime.NewClientNegotiator(config.NegotiatedSerializer, gv),
+		// 可选参数
+		ContentType:  config.ContentType,
+		GroupVersion: gv,
+		Negotiator:   runtime.NewClientNegotiator(config.NegotiatedSerializer, gv),
 	}
 
 	restClient, err := NewRESTClient(baseURL, versionedAPIPath, clientContent, rateLimiter, httpClient)
@@ -515,7 +528,9 @@ func InClusterConfig() (*Config, error) {
 		tokenFile  = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 		rootCAFile = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 	)
+	// 获取API Server的IP和端口
 	host, port := os.Getenv("KUBERNETES_SERVICE_HOST"), os.Getenv("KUBERNETES_SERVICE_PORT")
+
 	if len(host) == 0 || len(port) == 0 {
 		return nil, ErrNotInCluster
 	}
@@ -527,6 +542,7 @@ func InClusterConfig() (*Config, error) {
 
 	tlsClientConfig := TLSClientConfig{}
 
+	// 设置TLS认证
 	if _, err := certutil.NewPool(rootCAFile); err != nil {
 		klog.Errorf("Expected to load root CA config from %s, but got err: %v", rootCAFile, err)
 	} else {
