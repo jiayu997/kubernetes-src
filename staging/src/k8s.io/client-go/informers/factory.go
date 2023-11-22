@@ -58,6 +58,7 @@ type SharedInformerOption func(*sharedInformerFactory) *sharedInformerFactory
 type sharedInformerFactory struct {
 	client           kubernetes.Interface
 	namespace        string
+	// 这个函数用于设置list options规则
 	tweakListOptions internalinterfaces.TweakListOptionsFunc
 	lock             sync.Mutex
 	defaultResync    time.Duration
@@ -83,8 +84,10 @@ func WithCustomResyncConfig(resyncConfig map[v1.Object]time.Duration) SharedInfo
 
 // WithTweakListOptions sets a custom filter on all listers of the configured SharedInformerFactory.
 // 主要用于按用户自定义方式进行设置listoptions
+// tweakListOptions  = type TweakListOptionsFunc func(*v1.ListOptions)
 func WithTweakListOptions(tweakListOptions internalinterfaces.TweakListOptionsFunc) SharedInformerOption {
 	return func(factory *sharedInformerFactory) *sharedInformerFactory {
+		// 初始化工厂的tweakListOptions
 		factory.tweakListOptions = tweakListOptions
 		return factory
 	}
@@ -139,9 +142,9 @@ func NewSharedInformerFactoryWithOptions(client kubernetes.Interface, defaultRes
 	// 创建了一个informer工厂,实际上这个工厂是所有的资源共用的
 	factory := &sharedInformerFactory{
 		client:           client,
-		namespace:        v1.NamespaceAll,
+		namespace:        v1.NamespaceAll, // "" = 所有的命名空间
 		defaultResync:    defaultResync,  // 多久同步一次,初始化时传入的
-		informers:        make(map[reflect.Type]cache.SharedIndexInformer),
+		informers:        make(map[reflect.Type]cache.SharedIndexInformer),  // 存放各个资源的informer
 		startedInformers: make(map[reflect.Type]bool),
 		customResync:     make(map[reflect.Type]time.Duration),
 	}
@@ -168,7 +171,7 @@ func (f *sharedInformerFactory) Start(stopCh <-chan struct{}) {
 			// 调用：staging/src/k8s.io/client-go/tools/cache/shared_informer.go
 			// func (s *sharedIndexInformer) Run(stopCh <-chan struct{})
 			// 初始化Delta FIFO & Controller
-			// 启动shareindexinformer
+			// 启动对应资源的 shareindexinformer
 			go informer.Run(stopCh)
 			f.startedInformers[informerType] = true
 		}
@@ -176,6 +179,7 @@ func (f *sharedInformerFactory) Start(stopCh <-chan struct{}) {
 }
 
 // WaitForCacheSync waits for all started informers' cache were synced.
+// WaitForCacheSync的作用主要是确认是否所有的Informer的都已经从kubernetes接收过事件，如果已经接收到事件，那么HasSynced会被设置为true
 func (f *sharedInformerFactory) WaitForCacheSync(stopCh <-chan struct{}) map[reflect.Type]bool {
 	informers := func() map[reflect.Type]cache.SharedIndexInformer {
 		f.lock.Lock()

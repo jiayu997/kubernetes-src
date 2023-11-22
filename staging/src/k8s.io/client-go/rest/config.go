@@ -336,6 +336,7 @@ func RESTClientFor(config *Config) (*RESTClient, error) {
 // between all the API Groups and Versions.
 // Note that the http client takes precedence over the transport values configured.
 // The http client defaults to the `http.DefaultClient` if nil.
+// 返回一个真正的RestClient
 func RESTClientForConfigAndClient(config *Config, httpClient *http.Client) (*RESTClient, error) {
 	if config.GroupVersion == nil {
 		return nil, fmt.Errorf("GroupVersion is required when initializing a RESTClient")

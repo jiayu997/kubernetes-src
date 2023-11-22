@@ -68,9 +68,11 @@ type deployments struct {
 }
 
 // newDeployments returns a Deployments
+// 返回deployment ClientSet
 func newDeployments(c *AppsV1Client, namespace string) *deployments {
 	return &deployments{
-		client: c.RESTClient(),
+		// vendor/k8s.io/client-go/kubernetes/typed/apps/v1/apps_client.go:82
+		client: c.RESTClient(),  // 初始化reset
 		ns:     namespace,
 	}
 }
@@ -78,6 +80,8 @@ func newDeployments(c *AppsV1Client, namespace string) *deployments {
 // Get takes name of the deployment, and returns the corresponding deployment object, and an error if there is any.
 func (c *deployments) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.Deployment, err error) {
 	result = &v1.Deployment{}
+	// c.client = staging/src/k8s.io/client-go/rest/config.go:340
+	// 真正的struct: staging/src/k8s.io/client-go/rest/client.go:82
 	err = c.client.Get().
 		Namespace(c.ns).
 		Resource("deployments").

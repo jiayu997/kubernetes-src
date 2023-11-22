@@ -36,6 +36,7 @@ type AppsV1Interface interface {
 }
 
 // AppsV1Client is used to interact with features provided by the apps group.
+// AppsViClient 所有apps v1下的资源共用
 type AppsV1Client struct {
 	restClient rest.Interface
 }
@@ -48,6 +49,7 @@ func (c *AppsV1Client) DaemonSets(namespace string) DaemonSetInterface {
 	return newDaemonSets(c, namespace)
 }
 
+// 查询AppsV1Client下面的deployment资源
 func (c *AppsV1Client) Deployments(namespace string) DeploymentInterface {
 	return newDeployments(c, namespace)
 }
@@ -82,6 +84,7 @@ func NewForConfigAndClient(c *rest.Config, h *http.Client) (*AppsV1Client, error
 	if err := setConfigDefaults(&config); err != nil {
 		return nil, err
 	}
+	// 初始化reset client
 	client, err := rest.RESTClientForConfigAndClient(&config, h)
 	if err != nil {
 		return nil, err
@@ -119,6 +122,7 @@ func setConfigDefaults(config *rest.Config) error {
 
 // RESTClient returns a RESTClient that is used to communicate
 // with API server by this client implementation.
+// 返回resetClient
 func (c *AppsV1Client) RESTClient() rest.Interface {
 	if c == nil {
 		return nil

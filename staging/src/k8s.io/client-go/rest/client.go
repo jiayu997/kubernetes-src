@@ -79,6 +79,7 @@ type ClientContentConfig struct {
 // any failure.
 //
 // Most consumers should use client.New() to get a Kubernetes API client.
+// restClient 结构体
 type RESTClient struct {
 	// base is the root URL for all invocations of the client
 	base *url.URL

@@ -25,6 +25,7 @@ func getNewClientSet() (*kubernetes.Clientset, error) {
 		kubeconfig = flag.String("kubeconfig", "", "")
 	}
 
+	// get reset config
 	if config, err = rest.InClusterConfig(); err != nil {
 		if config, err = clientcmd.BuildConfigFromFlags("", *kubeconfig); err != nil {
 			return nil, errors.New("can't init by cluster mode")

@@ -89,6 +89,7 @@ func (f *deploymentInformer) defaultInformer(client kubernetes.Interface, resync
 
 func (f *deploymentInformer) Informer() cache.SharedIndexInformer {
 	// f.defaultInformer = cache.SharedIndexInformer
+	// vendor/k8s.io/client-go/informers/factory.go:207  实际调用了工厂的InformerFor函数
 	return f.factory.InformerFor(&appsv1.Deployment{}, f.defaultInformer)
 }
 

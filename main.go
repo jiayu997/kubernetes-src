@@ -1,7 +1,7 @@
 package main
 
-import "k8s.io/kubernetes/practice/shareinformer"
+import "k8s.io/kubernetes/practice/ingress-controller-demo1"
 
 func main() {
-	shareinformer.Demo1()
+	ingress_controller_demo1.Ingress_Demo()
 }
