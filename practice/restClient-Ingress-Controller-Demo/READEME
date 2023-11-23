@@ -1,0 +1,5 @@
+### controller说明
+1. watch service/ingress
+2. service有xx annotation -> create ingress
+3. service有xx annotation -> delete ingress
+3. ingress被删除 -> delete service

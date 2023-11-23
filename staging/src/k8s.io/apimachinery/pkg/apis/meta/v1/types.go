@@ -407,10 +407,11 @@ type ListOptions struct {
 
 	// +k8s:deprecated=includeUninitialized,protobuf=6
 
-	// Watch for changes to the described resources and return them as a stream of
-	// add, update, and remove notifications. Specify resourceVersion.
+	// Watch for changes to the described resources and return them as a stream of add, update, and remove notifications. Specify resourceVersion.
 	// +optional
+	// 如果是Watch的话这个选项需要设置
 	Watch bool `json:"watch,omitempty" protobuf:"varint,3,opt,name=watch"`
+
 	// allowWatchBookmarks requests watch events with type "BOOKMARK".
 	// Servers that do not implement bookmarks may ignore this flag and
 	// bookmarks are sent at the server's discretion. Clients should not

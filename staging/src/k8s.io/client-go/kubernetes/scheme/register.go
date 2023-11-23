@@ -71,8 +71,11 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 )
 
+// 初始化scheme
 var Scheme = runtime.NewScheme()
+// 初始化一个解码器
 var Codecs = serializer.NewCodecFactory(Scheme)
+
 var ParameterCodec = runtime.NewParameterCodec(Scheme)
 var localSchemeBuilder = runtime.SchemeBuilder{
 	admissionregistrationv1.AddToScheme,

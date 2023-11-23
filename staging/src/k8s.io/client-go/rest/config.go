@@ -61,6 +61,7 @@ type Config struct {
 
 	// ContentConfig contains settings that affect how objects are transformed when
 	// sent to the server.
+	// 匿名，设置GV和编码规则
 	ContentConfig
 
 	// Server requires Basic authentication
@@ -311,6 +312,9 @@ type ContentConfig struct {
 // the Kubernetes conventions, but may not be the Kubernetes API.
 // RESTClientFor is equivalent to calling RESTClientForConfigAndClient(config, httpClient),
 // where httpClient was generated with HTTPClientFor(config).
+
+// 一般使用这个函数来初始化REST_CLIENT比较好，只需要提供一个config对象
+
 func RESTClientFor(config *Config) (*RESTClient, error) {
 	if config.GroupVersion == nil {
 		return nil, fmt.Errorf("GroupVersion is required when initializing a RESTClient")
@@ -382,7 +386,8 @@ func RESTClientForConfigAndClient(config *Config, httpClient *http.Client) (*RES
 		// 可选参数
 		ContentType:  config.ContentType,
 		GroupVersion: gv,
-		Negotiator:   runtime.NewClientNegotiator(config.NegotiatedSerializer, gv),
+		// 设置编码器
+		Negotiator: runtime.NewClientNegotiator(config.NegotiatedSerializer, gv),
 	}
 
 	// 使用api路径/gv等待创建一个resetClient

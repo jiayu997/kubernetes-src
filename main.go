@@ -1,7 +1,12 @@
 package main
 
-import "k8s.io/kubernetes/practice/ingress-controller-demo1"
+import restClient_Ingress_Controller_Demo "k8s.io/kubernetes/practice/restClient-Ingress-Controller-Demo"
 
 func main() {
-	ingress_controller_demo1.Ingress_Demo()
+	//restClient_Ingress_Controller_Demo.GetDeployments()
+
+	restClient_Ingress_Controller_Demo.WatchDeployment()
+
+	//scheme.Demo1()
+
 }

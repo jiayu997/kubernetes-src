@@ -46,17 +46,20 @@ import (
 type Scheme struct {
 	// versionMap allows one to figure out the go type of an object with
 	// the given version and name.
+	// gvkToType：存储GVK与Type的映射关系
 	gvkToType map[schema.GroupVersionKind]reflect.Type
 
 	// typeToGroupVersion allows one to find metadata for a given go object.
 	// The reflect.Type we index by should *not* be a pointer.
+	//  typeToGVK：存储Type与GVK的映射关系，一个Type会对应一个或多个GVK
 	typeToGVK map[reflect.Type][]schema.GroupVersionKind
 
 	// unversionedTypes are transformed without conversion in ConvertToVersion.
+	// unversionedTypes：存储UnversionedType与GVK的映射关系
 	unversionedTypes map[reflect.Type]schema.GroupVersionKind
 
-	// unversionedKinds are the names of kinds that can be created in the context of any group
-	// or version
+	// unversionedKinds are the names of kinds that can be created in the context of any group or version
+	// unversionedKinds：存储Kind（资源种类）名称与UnversionedType的映射关系
 	// TODO: resolve the status of unversioned types.
 	unversionedKinds map[string]reflect.Type
 
@@ -88,6 +91,10 @@ type Scheme struct {
 type FieldLabelConversionFunc func(label, value string) (internalLabel, internalValue string, err error)
 
 // NewScheme creates a new Scheme. This scheme is pluggable by default.
+// 通过runtime.NewScheme实例化一个新的Scheme资源注册表。注册资源类型到Scheme资源注册表有两种方式：
+// 1.通过scheme.AddKnownTypes方法注册KnownType类型的对象
+// 2.通过scheme.AddUnversionedTypes方法注册UnversionedType类型的对象
+// 在我们创建crd资源的时候，通过代码生成工具，都会在register.go文件里帮我们自动生成 AddToScheme方法
 func NewScheme() *Scheme {
 	s := &Scheme{
 		gvkToType:                 map[schema.GroupVersionKind]reflect.Type{},

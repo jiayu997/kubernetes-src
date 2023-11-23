@@ -119,7 +119,7 @@ func setConfigDefaults(config *rest.Config) error {
 	config.GroupVersion = &gv
 	// 设置APT PATH
 	config.APIPath = "/apis"
-	// 设置编码
+	// 设置编码, apps/v1 默认用的是vendor/k8s.io/client-go/kubernetes/scheme/register.go
 	config.NegotiatedSerializer = scheme.Codecs.WithoutConversion()
 
 	// 设置USER Agent

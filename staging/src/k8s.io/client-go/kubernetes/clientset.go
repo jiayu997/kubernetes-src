@@ -460,6 +460,7 @@ func NewForConfigAndClient(c *rest.Config, httpClient *http.Client) (*Clientset,
 	// restClient rest.Interface
 	// *AppsV1Client
 	// staging/src/k8s.io/client-go/kubernetes/typed/apps/v1/apps_client.go AppsV1Client
+	// 初始化apps的 AppsV1Client
 	cs.appsV1, err = appsv1.NewForConfigAndClient(&configShallowCopy, httpClient)
 	if err != nil {
 		return nil, err

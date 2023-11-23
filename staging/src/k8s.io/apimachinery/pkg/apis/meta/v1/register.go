@@ -51,6 +51,7 @@ func Kind(kind string) schema.GroupKind {
 var scheme = runtime.NewScheme()
 
 // ParameterCodec knows about query parameters used with the meta v1 API spec.
+// apps/v1 资源解码器
 var ParameterCodec = runtime.NewParameterCodec(scheme)
 
 var optionsTypes = []runtime.Object{

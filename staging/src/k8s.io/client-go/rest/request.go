@@ -694,6 +694,7 @@ func (b *throttledLogger) Infof(message string, args ...interface{}) {
 
 // Watch attempts to begin watching the requested location.
 // Returns a watch.Interface, or an error.
+// 返回一个watcher
 func (r *Request) Watch(ctx context.Context) (watch.Interface, error) {
 	// We specifically don't want to rate limit watches, so we
 	// don't use r.rateLimiter here.

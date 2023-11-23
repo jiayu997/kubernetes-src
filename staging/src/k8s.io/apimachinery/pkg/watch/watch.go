@@ -44,6 +44,7 @@ const (
 	Added    EventType = "ADDED"
 	Modified EventType = "MODIFIED"
 	Deleted  EventType = "DELETED"
+	// BOOKMARK事件
 	Bookmark EventType = "BOOKMARK"
 	Error    EventType = "ERROR"
 )
