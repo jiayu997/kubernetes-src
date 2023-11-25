@@ -54,10 +54,13 @@ type Indexer interface {
 	ByIndex(indexName, indexedValue string) ([]interface{}, error)
 
 	// GetIndexer return the indexers
+	// 返回 索引与索引函数的对应关系
+	// type Indexers map[string]IndexFunc
 	GetIndexers() Indexers
 
 	// AddIndexers adds more indexers to this store.  If you call this after you already have data
 	// in the store, the results are undefined.
+	// 添加索引
 	AddIndexers(newIndexers Indexers) error
 }
 
@@ -90,7 +93,19 @@ const (
 	NamespaceIndex string = "namespace"
 )
 
-// MetaNamespaceIndexFunc is a default index function that indexes based on an object's namespace
+/*
+MetaNamespaceIndexFunc is a default index function that indexes based on an object's namespace
+默认的namespace索引函数,返回是[]string，但是我们可以发现实际上就是一个string
+Indices: {
+	"namespace": {
+		"default": ["pod-1","pod-2"],
+		"kube-system": ["pod-3"]
+	},
+	"nodeName": {"node1": ["pod1"],"node2": ["pod2"]},
+
+	MetaNamespaceIndexFunc 计算某个pod-1的namespace，例如： default(索引键)
+}
+*/
 func MetaNamespaceIndexFunc(obj interface{}) ([]string, error) {
 	meta, err := meta.Accessor(obj)
 	if err != nil {
@@ -115,17 +130,19 @@ type Index map[string]sets.String // sets.String存了object key
 //	}
 type Indexers map[string]IndexFunc
 
-// Indices maps a name to an Index
-// 索引器名称与 Index 索引的映射
-// 存储缓存器，key 为索引器名称，value 为缓存的数据
-//
-//	Indices: {
-//			"namespace": {
-//				"default": ["pod-1","pod-2"],
-//				"kube-system": ["pod-3"]
-//			},
-//			"nodeName": {"node1": ["pod1"],"node2": ["pod2"]},
-//	}
+/*
+Indices maps a name to an Index
+索引器名称与 Index 索引的映射
+存储缓存器，key 为索引器名称，value 为缓存的数据
+Indices: {
+	"namespace": {
+		"default": ["pod-1","pod-2"],
+		"kube-system": ["pod-3"]
+	},
+	"nodeName": {"node1": ["pod1"],"node2": ["pod2"]},
+}
+*/
+
 type Indices map[string]Index
 
 /*
@@ -141,17 +158,17 @@ Indexers: {
 Indices: {
 	//namespace 这个索引分类下的所有索引数据
 	"namespace": {
-	// Index 就是一个索引键下所有的对象键列表
-	"default": ["pod-1", "pod-2"],
-	// Index
-	"kube-system": ["pod-3"]
+		// Index 就是一个索引键下所有的对象键列表
+		"default": ["pod-1", "pod-2"],
+		// Index
+		"kube-system": ["pod-3"]
 	},
 	//nodeName 这个索引分类下的所有索引数据(对象键列表)
 	"nodeName": {
-	// Index
-	"node1": ["pod-1"],
-	// Index
-	"node2": ["pod-2", "pod-3"]
+		// Index
+		"node1": ["pod-1"],
+		// Index
+		"node2": ["pod-2", "pod-3"]
 	}
 }
 */

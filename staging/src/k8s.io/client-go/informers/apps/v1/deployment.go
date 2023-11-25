@@ -86,6 +86,7 @@ func NewFilteredDeploymentInformer(client kubernetes.Interface, namespace string
 func (f *deploymentInformer) defaultInformer(client kubernetes.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
 	// 默认的informer附带的缓存默认具有一个命名空间索引,索引健计算默认使用namespace/name计算
 	// 这里主要是对某类资源初始化了一个shareindexinformer
+	// cache.Indexers = 附带了一个默认 namespace和MetaNamespaceIndexFunc索引函数
 	return NewFilteredDeploymentInformer(client, f.namespace, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
 }
 

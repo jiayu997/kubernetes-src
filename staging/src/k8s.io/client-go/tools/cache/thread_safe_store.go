@@ -164,13 +164,18 @@ func (c *threadSafeMap) Replace(items map[string]interface{}, resourceVersion st
 	}
 }
 
-// Index returns a list of items that match the given object on the index function.
-// Index is thread-safe so long as you treat all items as immutable.
-
-// Index 是索引的方法了
-// IndexName = 索引名称
-// obj = ojb
-// 作用：从某个索引器下面，根据用户传入的object返回匹配的所有object key list
+/*
+	Index returns a list of items that match the given object on the index function.
+	Index is thread-safe so long as you treat all items as immutable.
+indices: {
+	"namespace": {"default": {"pod-1","pod-2"},"devops": {"pod-3","pod-4"},},
+	"label": {"labelA": {"pod-1","pod-2"}}
+}
+Index 是索引的方法了
+IndexName = 索引名称
+obj = obj = deployment/pod and ...
+作用：返回基于indexName(索引器名称,namespace), 计算出pod-1的索引键default,然后返回pod-1,pod-2 object ， 不是object key
+ */
 func (c *threadSafeMap) Index(indexName string, obj interface{}) ([]interface{}, error) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -198,6 +203,7 @@ func (c *threadSafeMap) Index(indexName string, obj interface{}) ([]interface{},
 		// In majority of cases, there is exactly one value matching.
 		// Optimize the most common path - deduping is not needed here.
 		// 当索引健只有一个时,直接获取到object key集合了
+		// 获取某个索引键下面的所有对象键
 		storeKeySet = index[indexedValues[0]]
 	} else {
 		// Need to de-dupe the return list.
@@ -256,12 +262,19 @@ func (c *threadSafeMap) ByIndex(indexName, indexedValue string) ([]interface{}, 
 	return list, nil
 }
 
-// IndexKeys returns a list of the Store keys of the objects whose indexed values in the given index include the given indexed value.
-// IndexKeys is thread-safe so long as you treat all items as immutable.
-// indexName = 索引器名称
-// indexValue = 索引健
-// []string = 某个索引器下某个索引健对应的对象健集合
-// 作用：返回某索引器下面，某个索引健对应的所有对象健集合
+/*
+IndexKeys returns a list of the Store keys of the objects whose indexed values in the given index include the given indexed value.
+IndexKeys is thread-safe so long as you treat all items as immutable.
+[]string = 某个索引器下某个索引健对应的对象健集合
+作用：返回某索引器下面，某个索引健对应的所有对象健集合
+
+indices: {
+	"namespace": {"default": {"pod-1","pod-2"},"devops": {"pod-3","pod-4"},},
+	"label": {"labelA": {"pod-1","pod-2"}}
+}
+
+indexKeys 相当于 传入 indexName=索引器名称(namespace)、indexValue=索引键(default) 然后索取到所有的对象键 ["pod-1","pod-2"]
+*/
 func (c *threadSafeMap) IndexKeys(indexName, indexedValue string) ([]string, error) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -282,7 +295,13 @@ func (c *threadSafeMap) IndexKeys(indexName, indexedValue string) ([]string, err
 	return set.List(), nil
 }
 
-// 返回某个索引器下有哪些索引健
+/*
+indices: {
+	"namespace": {"default": {"pod-1","pod-2"},"devops": {"pod-3","pod-4"},},
+	"label": {"labelA": {"pod-1","pod-2"}}
+}
+返回某个索引器下有哪些索引健, 例如返回namespace索引器下的所有索引键(default,devops)
+ */
 func (c *threadSafeMap) ListIndexFuncValues(indexName string) []string {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -299,11 +318,12 @@ func (c *threadSafeMap) ListIndexFuncValues(indexName string) []string {
 	return names
 }
 
-// 返回indexers
+// 返回indexers = 索引与对应的索引函数集合
 func (c *threadSafeMap) GetIndexers() Indexers {
 	return c.indexers
 }
 
+// 添加一个索引器函数
 func (c *threadSafeMap) AddIndexers(newIndexers Indexers) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -322,6 +342,7 @@ func (c *threadSafeMap) AddIndexers(newIndexers Indexers) error {
 	}
 
 	// 从新的indexers中添加到当前indexers中去
+	// k = 索取器名称，v = 索引器函数
 	for k, v := range newIndexers {
 		c.indexers[k] = v
 	}

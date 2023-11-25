@@ -31,6 +31,7 @@ func testKeyFunc(obj interface{}) (string, error) {
 	return cache.MetaNamespaceKeyFunc(obj)
 }
 
+// 索引函数
 func testLabelIndexFunc(obj interface{}) ([]string, error) {
 	meta, err := meta.Accessor(obj)
 	if err != nil {
@@ -52,8 +53,10 @@ func testLabelIndexFunc(obj interface{}) ([]string, error) {
 func TestGetIndexFuncValues(t *testing.T) {
 	// add namespace/label indexers
 	index := cache.NewIndexer(testKeyFunc, cache.Indexers{
+		// 命名空间索引
 		cache.NamespaceIndex: cache.MetaNamespaceIndexFunc,
-		"label":              testLabelIndexFunc,
+		// label索引  		  label索引函数
+		"label": testLabelIndexFunc,
 	})
 	pod1 := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "one", Namespace: "default", Labels: map[string]string{"foo": "vlan"}}}
 	pod2 := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "two", Namespace: "default", Labels: map[string]string{"foo": "vlan"}}}

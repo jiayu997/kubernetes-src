@@ -189,51 +189,86 @@ func (c *cache) Delete(obj interface{}) error {
 
 // List returns a list of all the items.
 // List is completely threadsafe as long as you treat all items as immutable.
+// 返回当前缓存里面所有object的List
 func (c *cache) List() []interface{} {
 	return c.cacheStorage.List()
 }
 
 // ListKeys returns a list of all the keys of the objects currently
 // in the cache.
+// 返回存储在缓存中所有资源的一个object key List
 func (c *cache) ListKeys() []string {
 	return c.cacheStorage.ListKeys()
 }
 
 // GetIndexers returns the indexers of cache
 // 返回GetIndexers
+// 返回indexers = 索引与对应的索引函数集合
 func (c *cache) GetIndexers() Indexers {
 	return c.cacheStorage.GetIndexers()
 }
 
 // Index returns a list of items that match on the index function
 // Index is thread-safe so long as you treat all items as immutable
+/*
+indices: {
+	"namespace": {"default": {"pod-1","pod-2"},"devops": {"pod-3","pod-4"},},
+	"label": {"labelA": {"pod-1","pod-2"}}
+}
+ */
+
+// 返回indexName索引器下object的索引键下面对应的所有object,例如default下面的pod-1,pod-2
 func (c *cache) Index(indexName string, obj interface{}) ([]interface{}, error) {
-	// return []
 	return c.cacheStorage.Index(indexName, obj)
 }
 
-// 作用：返回某索引器下面，某个索引健对应的所有对象健集合
+/*
+indexName = 索引器名称
+indexValue = 索引健
+[]string = 某个索引器下某个索引健对应的对象健集合
+作用：返回某索引器下面，某个索引健对应的所有对象健集合
+indices: {
+	"namespace": {"default": {"pod-1","pod-2"},"devops": {"pod-3","pod-4"},},
+	"label": {"labelA": {"pod-1","pod-2"}}
+}
+
+indexKeys 相当于 传入 indexName=索引器名称(namespace)、indexValue=索引键(default) 然后索取到所有的对象键 ["pod-1","pod-2"]
+indexKeys 与 Index区别在于，index是传入的object,索引键还需要在计算一下
+*/
 func (c *cache) IndexKeys(indexName, indexKey string) ([]string, error) {
 	return c.cacheStorage.IndexKeys(indexName, indexKey)
 }
 
 // ListIndexFuncValues returns the list of generated values of an Index func
-// 传入索引名称，返回计算出来的索引健
+/*
+indices: {
+	"namespace": {"default": {"pod-1","pod-2"},"devops": {"pod-3","pod-4"},},
+	"label": {"labelA": {"pod-1","pod-2"}}
+}
+返回某个索引器下有哪些索引健, 例如返回namespace索引器下的所有索引键(default,devops)
+*/
 func (c *cache) ListIndexFuncValues(indexName string) []string {
 	return c.cacheStorage.ListIndexFuncValues(indexName)
 }
 
+// indexName = 索引器名称
+// indexValue = 索引健名称
+// 返回某个索引器下某个索引健的object list
 func (c *cache) ByIndex(indexName, indexKey string) ([]interface{}, error) {
 	return c.cacheStorage.ByIndex(indexName, indexKey)
 }
 
+// 添加一个索引器函数, 当索引已经有数据后，无法再添加了
 func (c *cache) AddIndexers(newIndexers Indexers) error {
 	return c.cacheStorage.AddIndexers(newIndexers)
 }
 
 // Get returns the requested item, or sets exists=false.
 // Get is completely threadsafe as long as you treat all items as immutable.
+// 根据object判断本地缓存是否存在这个obejct
+// item = object
 func (c *cache) Get(obj interface{}) (item interface{}, exists bool, err error) {
+	// 计算obj的object key
 	key, err := c.keyFunc(obj)
 	if err != nil {
 		return nil, false, KeyError{obj, err}
@@ -243,6 +278,7 @@ func (c *cache) Get(obj interface{}) (item interface{}, exists bool, err error) 
 
 // GetByKey returns the request item, or exists=false.
 // GetByKey is completely threadsafe as long as you treat all items as immutable.
+// 根据object key 判断本地缓存中时候有这个object
 func (c *cache) GetByKey(key string) (item interface{}, exists bool, err error) {
 	item, exists = c.cacheStorage.Get(key)
 	return item, exists, nil
@@ -251,15 +287,19 @@ func (c *cache) GetByKey(key string) (item interface{}, exists bool, err error) 
 // Replace will delete the contents of 'c', using instead the given list.
 // 'c' takes ownership of the list, you should not reference the list again
 // after calling this function.
+// list = []object
+// 基于 []object更新底层缓存
 func (c *cache) Replace(list []interface{}, resourceVersion string) error {
 	items := make(map[string]interface{}, len(list))
 	for _, item := range list {
+		// 计算object key
 		key, err := c.keyFunc(item)
 		if err != nil {
 			return KeyError{item, err}
 		}
 		items[key] = item
 	}
+	// 基于新的map[object key]object(新的数据) 将底层的所有索引重构
 	c.cacheStorage.Replace(items, resourceVersion)
 	return nil
 }
@@ -279,6 +319,9 @@ func NewStore(keyFunc KeyFunc) Store {
 }
 
 // NewIndexer returns an Indexer implemented simply with a map and a lock.
+// deployment/xx informer 默认 附带了一个默认 namespace和MetaNamespaceIndexFunc索引函数
+// 位置： vendor/k8s.io/client-go/informers/apps/v1/deployment.go:90
+// indexers = cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}
 func NewIndexer(keyFunc KeyFunc, indexers Indexers) Indexer {
 	return &cache{
 		// Indices默认是空的
