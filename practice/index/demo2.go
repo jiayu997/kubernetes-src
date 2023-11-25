@@ -15,8 +15,10 @@ import (
 const (
 	INDEXERSTOREGETINDEXERLIST = false
 	INDEXERSTOREGETINDEXERGET  = false
-	INDEXERSTOREAUD            = true
+	INDEXERSTOREAUD            = false
 	EVENT_HANDLER              = false
+	INDEXERINDEX               = false
+	INDEXERINDEXKEYS           = true
 )
 
 func TestDeploymentInformer() {
@@ -62,6 +64,16 @@ func TestDeploymentInformer() {
 	if INDEXERSTOREAUD {
 		fmt.Println("indexerAUD")
 		indexerStoreAUD(deploymentShareIndexInformer)
+	}
+
+	if INDEXERINDEX {
+		fmt.Println("indexerIndex")
+		indexerIndex(clientSet, deploymentShareIndexInformer)
+	}
+
+	if INDEXERINDEXKEYS {
+		fmt.Println("indexerIndexKeys")
+		indexerIndexKeys(clientSet, deploymentShareIndexInformer)
 	}
 
 	// 关闭,传递一个信号过去，让informer/controller关闭
@@ -204,8 +216,46 @@ func indexerStoreGetIndexerGet(clientSet *kubernetes.Clientset, deploymentShareI
 	fmt.Printf("Get Namespae: %s DeploymentName: %s Exist: %v\n", deploymentMap[objectKey].Namespace, deploymentMap[objectKey].Name, exist)
 }
 
-func indexerGetReplace() {
-	fmt.Println(1)
+func indexerIndex(clientSet *kubernetes.Clientset, deploymentShareIndexInformer cache.SharedIndexInformer) {
+	deployments, err := clientSet.AppsV1().Deployments("").List(context.TODO(), metav1.ListOptions{Limit: 10})
+	if err != nil {
+		log.Fatal(err)
+	}
+	// 取出一个deployment
+	deployment := deployments.Items[0]
+	fmt.Printf("取出Deployment Namespace: %s Name: %s\n", deployment.Namespace, deployment.Name)
+
+	// 返回命名空间索引下 deployment计算出来的索引键下面的所有对象键
+	objectList, err := deploymentShareIndexInformer.GetIndexer().Index(cache.NamespaceIndex, &deployment)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, v := range objectList {
+		dp := v.(*appsv1.Deployment)
+		fmt.Printf("Namespace: %s Name: %s\n", dp.Namespace, dp.Name)
+	}
+}
+
+func indexerIndexKeys(clientSet *kubernetes.Clientset, deploymentShareIndexInformer cache.SharedIndexInformer) {
+	deployments, err := clientSet.AppsV1().Deployments("").List(context.TODO(), metav1.ListOptions{Limit: 10})
+	if err != nil {
+		log.Fatal(err)
+	}
+	// 取出一个deployment
+	deployment := deployments.Items[0]
+	deploymentObjectKey, err := cache.DeletionHandlingMetaNamespaceKeyFunc(&deployment)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("取出Deployment Namespace: %s Name: %s, ObjectKey: %s\n", deployment.Namespace, deployment.Name, deploymentObjectKey)
+
+	// 在命名空间下，object的namespace就是索引键
+	// 待分析 ！！！！！！！！！！！！！！！！！！！
+	objectKeyList, err := deploymentShareIndexInformer.GetIndexer().IndexKeys(cache.NamespaceIndex, deploymentObjectKey)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(objectKeyList)
 }
 
 // 为底层索引添加索引函数, 只能在informer未启动之前添加

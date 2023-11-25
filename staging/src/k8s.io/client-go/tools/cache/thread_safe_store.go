@@ -293,6 +293,7 @@ func (c *threadSafeMap) IndexKeys(indexName, indexedValue string) ([]string, err
 	// 获取到index
 	index := c.indices[indexName]
 
+	//fmt.Printf("---------------%v",index)
 	// 根据索引健返回sets集合
 	set := index[indexedValue]
 

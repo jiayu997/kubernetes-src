@@ -39,11 +39,17 @@ type Indexer interface {
 	// Index returns the stored objects whose set of indexed values
 	// intersects the set of indexed values of the given object, for
 	// the named index
+	// 返回indexName索引器下object的索引键下面对应的所有object,例如default下面的pod-1,pod-2 object
+	// 例如：object 的命名空间： devops
+	// indexName = namespace
+	// 返回devops命名空间下所有的对象
 	Index(indexName string, obj interface{}) ([]interface{}, error)
 
 	// IndexKeys returns the storage keys of the stored objects whose
 	// set of indexed values for the named index includes the given
 	// indexed value
+	// indexKeys 相当于 传入 indexName=索引器名称(namespace)、indexValue=索引键(default) 然后索取到所有的对象键 ["pod-1","pod-2"]
+    // indexKeys 与 Index区别在于，index是传入的object,索引键还需要在计算一下
 	IndexKeys(indexName, indexedValue string) ([]string, error)
 
 	// ListIndexFuncValues returns all the indexed values of the given index
