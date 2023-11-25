@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	GETINDEXERLIST = false
-	GETINDEXERGET  = true
-	EVENT_HADLEER  = false
+	INDEXERSTOREGETINDEXERLIST = false
+	INDEXERSTOREGETINDEXERGET  = false
+	INDEXERSTORECURD           = true
+	EVENT_HANDLER              = false
 )
 
 func TestDeploymentInformer() {
@@ -29,7 +30,7 @@ func TestDeploymentInformer() {
 	// 为deployment资源类型初始化了一个shareindexinformer, 并且这个informer注册到shareindexinformer Factory中去
 	deploymentShareIndexInformer := deploymentInformer.Informer()
 
-	if EVENT_HADLEER {
+	if EVENT_HANDLER {
 		// add EventHandler function
 		fmt.Println("eventHandler-eventHandler")
 		eventHandler(deploymentShareIndexInformer)
@@ -47,15 +48,15 @@ func TestDeploymentInformer() {
 	// 等待同步完成
 	informerFactory.WaitForCacheSync(stopChan)
 
-	if GETINDEXERLIST {
+	if INDEXERSTOREGETINDEXERLIST {
 		// 查询indexer下面目前有哪些deployment List
-		fmt.Println("getIndexerList-getIndexerList")
-		getIndexerList(deploymentShareIndexInformer)
+		fmt.Println("indexerStoreGetIndexerList")
+		indexerStoreGetIndexerList(deploymentShareIndexInformer)
 	}
 
-	if GETINDEXERGET {
-		fmt.Println("getIndexerGet-getIndexerGet")
-		getIndexerGet(clientSet, deploymentShareIndexInformer)
+	if INDEXERSTOREGETINDEXERGET {
+		fmt.Println("indexerStoreGetIndexerGet")
+		indexerStoreGetIndexerGet(clientSet, deploymentShareIndexInformer)
 	}
 
 	// 关闭,传递一个信号过去，让informer/controller关闭
@@ -79,15 +80,38 @@ type Indexer interface {
 }
 */
 
-func getIndexerList(deploymentShareIndexInformer cache.SharedIndexInformer) {
+// 存储添加/更新/删除
+func indexerStoreAUD(deploymentShareIndexInformer cache.SharedIndexInformer) {
+	fmt.Println(1)
+}
+
+func indexerStoreAdd(deploymentShareIndexInformer cache.SharedIndexInformer) {
+	fmt.Println(1)
+}
+
+func indexerStoreUpdate(deploymentShareIndexInformer cache.SharedIndexInformer) {
+	fmt.Println(1)
+}
+
+func indexerStoreDelete(deploymentShareIndexInformer cache.SharedIndexInformer) {
+	fmt.Println(1)
+}
+
+func indexerStoreGetIndexerList(deploymentShareIndexInformer cache.SharedIndexInformer) {
 	// 查询indexer下面目前有哪些deployment List
 	for _, dp := range deploymentShareIndexInformer.GetIndexer().List() {
 		deployment, _ := dp.(*appsv1.Deployment)
 		fmt.Printf("indexer-List: DeploymentNameSpace: %s DeploymentName: %s\n", deployment.Namespace, deployment.Name)
 	}
+
+	// 查询indexer下面目前所有的object key
+	objectKeys := deploymentShareIndexInformer.GetIndexer().ListKeys()
+	for _, objectKey := range objectKeys {
+		fmt.Println(objectKey)
+	}
 }
 
-func getIndexerGet(clientSet *kubernetes.Clientset, deploymentShareIndexInformer cache.SharedIndexInformer) {
+func indexerStoreGetIndexerGet(clientSet *kubernetes.Clientset, deploymentShareIndexInformer cache.SharedIndexInformer) {
 	deployments, err := clientSet.AppsV1().Deployments("").List(context.TODO(), metav1.ListOptions{Limit: 10})
 	if err != nil {
 		log.Fatal(err)
@@ -98,6 +122,7 @@ func getIndexerGet(clientSet *kubernetes.Clientset, deploymentShareIndexInformer
 	var objectKey string
 
 	for _, deployment := range deployments.Items {
+		// cache.DeletionHandlingMetaNamespaceKeyFunc 默认的object key 计算函数
 		key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(&deployment)
 		if err != nil {
 			log.Fatal(err)
@@ -121,6 +146,10 @@ func getIndexerGet(clientSet *kubernetes.Clientset, deploymentShareIndexInformer
 		log.Fatal(err)
 	}
 	fmt.Printf("Get Namespae: %s DeploymentName: %s Exist: %v\n", deploymentMap[objectKey].Namespace, deploymentMap[objectKey].Name, exist)
+}
+
+func indexerStoreGetReplace() {
+	fmt.Println(1)
 }
 
 // 为底层索引添加索引函数, 只能在informer未启动之前添加
