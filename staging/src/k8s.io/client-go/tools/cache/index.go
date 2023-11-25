@@ -127,3 +127,33 @@ type Indexers map[string]IndexFunc
 //			"nodeName": {"node1": ["pod1"],"node2": ["pod2"]},
 //	}
 type Indices map[string]Index
+
+/*
+// 包含的所有索引器/分类以及对应的实现
+Indexers: {
+	"namespace": NamespaceIndexFunc,
+	"nodeName": NodeNameIndexFunc,
+}
+*/
+
+/*
+// 包含的所有索引分类中所有的索引数据
+Indices: {
+	//namespace 这个索引分类下的所有索引数据
+	"namespace": {
+	// Index 就是一个索引键下所有的对象键列表
+	"default": ["pod-1", "pod-2"],
+	// Index
+	"kube-system": ["pod-3"]
+	},
+	//nodeName 这个索引分类下的所有索引数据(对象键列表)
+	"nodeName": {
+	// Index
+	"node1": ["pod-1"],
+	// Index
+	"node2": ["pod-2", "pod-3"]
+	}
+}
+*/
+// 1. Indexers和Indices都是按照IndexFunc(名字)分组， 每个IndexFunc输出多个IndexKey，产生相同IndexKey的多个对象存储在一个集合中
+// 2. IndexKey主要是用于快速查找ObjectKey; 而ObjectKey是对象存储时唯一命名的key(这个key方便在存储中快速找到相应的对象)

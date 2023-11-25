@@ -208,6 +208,7 @@ func (c *cache) GetIndexers() Indexers {
 // Index returns a list of items that match on the index function
 // Index is thread-safe so long as you treat all items as immutable
 func (c *cache) Index(indexName string, obj interface{}) ([]interface{}, error) {
+	// return []
 	return c.cacheStorage.Index(indexName, obj)
 }
 
@@ -280,6 +281,7 @@ func NewStore(keyFunc KeyFunc) Store {
 // NewIndexer returns an Indexer implemented simply with a map and a lock.
 func NewIndexer(keyFunc KeyFunc, indexers Indexers) Indexer {
 	return &cache{
+		// Indices默认是空的
 		cacheStorage: NewThreadSafeStore(indexers, Indices{}),
 		keyFunc:      keyFunc,
 	}

@@ -612,7 +612,10 @@ func (config *inClusterClientConfig) Possible() bool {
 // components. Warnings should reflect this usage. If neither masterUrl or kubeconfigPath
 // are passed in we fallback to inClusterConfig. If inClusterConfig fails, we fallback
 // to the default config.
+
+// kubeconfig 初始化 config
 func BuildConfigFromFlags(masterUrl, kubeconfigPath string) (*restclient.Config, error) {
+	// 当我们未设置的时候，用集群内配置初始化一下
 	if kubeconfigPath == "" && masterUrl == "" {
 		klog.Warning("Neither --kubeconfig nor --master was specified.  Using the inClusterConfig.  This might not work.")
 		// 使用集群内初始化一下 reset Config:

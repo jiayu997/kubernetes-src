@@ -238,6 +238,12 @@ func NewSharedIndexInformer(lw ListerWatcher, exampleObject runtime.Object, defa
 		processor: &sharedProcessor{clock: realClock},
 		// DeletionHandlingMetaNamespaceKeyFunc = 在计算object key之前判断一下是否出于删除状态，如果处于删除状态直接返回object key，否则则计算返回
 		// indexer: 实际的本地缓存
+		// indexers = type Indexers map[string]IndexFunc
+		// indexer 实际为
+		// type cache struct {
+			//cacheStorage ThreadSafeStore
+			//keyFunc KeyFunc
+	    // }
 		indexer:                         NewIndexer(DeletionHandlingMetaNamespaceKeyFunc, indexers),
 		listerWatcher:                   lw,            // k8s.io/client-go/informers/apps/v1/deployment.go 中的NewFilteredDeploymentInformer 默认初始化传进来的
 		objectType:                      exampleObject, // 需要list/watch对象类型
@@ -515,6 +521,7 @@ func (s *sharedIndexInformer) GetStore() Store {
 }
 
 func (s *sharedIndexInformer) GetIndexer() Indexer {
+	// s.indexer = func NewIndexer(keyFunc KeyFunc, indexers Indexers) Indexer {} -> type cache struct{} == vendor/k8s.io/client-go/tools/cache/store.go:147
 	return s.indexer
 }
 

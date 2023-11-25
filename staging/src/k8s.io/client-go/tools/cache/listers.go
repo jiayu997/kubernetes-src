@@ -31,9 +31,14 @@ import (
 type AppendFunc func(interface{})
 
 // ListAll calls appendFn with each value retrieved from store which matches the selector.
+// store = cache.Indexer
+// selector 过滤
+// appendFn 添加函数
 func ListAll(store Store, selector labels.Selector, appendFn AppendFunc) error {
 	selectAll := selector.Empty()
+	// store.List = indexers中的所有object item
 	for _, m := range store.List() {
+		// 当没有过滤的时候，在索引中遍历到的所有对象都加进去
 		if selectAll {
 			// Avoid computing labels of the objects to speed up common flows
 			// of listing all objects.
@@ -44,6 +49,7 @@ func ListAll(store Store, selector labels.Selector, appendFn AppendFunc) error {
 		if err != nil {
 			return err
 		}
+		// 对object item进行筛选
 		if selector.Matches(labels.Set(metadata.GetLabels())) {
 			appendFn(m)
 		}
@@ -52,8 +58,10 @@ func ListAll(store Store, selector labels.Selector, appendFn AppendFunc) error {
 }
 
 // ListAllByNamespace used to list items belongs to namespace from Indexer.
+// 在索引中使用namespace/selector 过滤出需要的
 func ListAllByNamespace(indexer Indexer, namespace string, selector labels.Selector, appendFn AppendFunc) error {
 	selectAll := selector.Empty()
+	// 命名空间过滤条件为所有的时候，遍历一下
 	if namespace == metav1.NamespaceAll {
 		for _, m := range indexer.List() {
 			if selectAll {

@@ -61,6 +61,7 @@ func NewFilteredDeploymentInformer(client kubernetes.Interface, namespace string
 	return cache.NewSharedIndexInformer(
 		// 初始化List和watch,这里可以设置一些过滤options
 		&cache.ListWatch{
+			// 初始化了List函数
 			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
@@ -68,6 +69,7 @@ func NewFilteredDeploymentInformer(client kubernetes.Interface, namespace string
 				// 返回deploymentList
 				return client.AppsV1().Deployments(namespace).List(context.TODO(), options)
 			},
+			// 初始化了Watch函数
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)

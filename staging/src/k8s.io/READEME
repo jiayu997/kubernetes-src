@@ -1,3 +1,4 @@
 ## client-go库说明
 1. staging/src/k8s.io/apimachinery/pkg/runtime/scheme.go  资源注册相关的
 2. staging/src/k8s.io/client-go/kubernetes/typed/apps/v1/apps_client.go    apps client资源 rest.Config gvk和资源编码初始化
+3. staging/src/k8s.io/client-go/tools/clientcmd/client_config.go  初始化rest config

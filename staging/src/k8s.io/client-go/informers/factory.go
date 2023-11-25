@@ -205,6 +205,7 @@ func (f *sharedInformerFactory) WaitForCacheSync(stopCh <-chan struct{}) map[ref
 // obj = &appsv1.Deployment{}
 // newFunc = cache.SharedIndexInformer 返回一个初始化shareindexinformer函数
 // newFunc = staging/src/k8s.io/client-go/informers/apps/v1/deployment.go 中 func (f *deploymentInformer) defaultInformer(client kubernetes.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {}
+// 这个函数可多次执行, 返回某个资源的shareindexInformer
 func (f *sharedInformerFactory) InformerFor(obj runtime.Object, newFunc internalinterfaces.NewInformerFunc) cache.SharedIndexInformer {
 	f.lock.Lock()
 	defer f.lock.Unlock()

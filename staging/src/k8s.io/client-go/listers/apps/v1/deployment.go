@@ -43,6 +43,7 @@ type deploymentLister struct {
 
 // NewDeploymentLister returns a new DeploymentLister.
 func NewDeploymentLister(indexer cache.Indexer) DeploymentLister {
+	// 返回一个结构体，这个结构提包含了cache.Indexer
 	return &deploymentLister{indexer: indexer}
 }
 

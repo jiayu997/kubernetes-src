@@ -100,6 +100,7 @@ func NewFilteredListWatchFromClient(c Getter, resource string, namespace string,
 }
 
 // List a set of apiserver resources
+// List 在 初始化shareindexinformer时初始化：staging/src/k8s.io/client-go/informers/apps/v1/deployment.go:59
 func (lw *ListWatch) List(options metav1.ListOptions) (runtime.Object, error) {
 	// ListWatch is used in Reflector, which already supports pagination.
 	// Don't paginate here to avoid duplication.
@@ -107,6 +108,7 @@ func (lw *ListWatch) List(options metav1.ListOptions) (runtime.Object, error) {
 }
 
 // Watch a set of apiserver resources
+// Watch 在 初始化shareindexinformer时初始化：staging/src/k8s.io/client-go/informers/apps/v1/deployment.go:59
 func (lw *ListWatch) Watch(options metav1.ListOptions) (watch.Interface, error) {
 	return lw.WatchFunc(options)
 }
