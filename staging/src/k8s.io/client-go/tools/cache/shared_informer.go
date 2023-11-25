@@ -205,6 +205,13 @@ type SharedIndexInformer interface {
 	// 在启动之前添加 indexers 到 informer 中
 	AddIndexers(indexers Indexers) error
 
+	/*
+	返回的是
+	type cache struct {
+		cacheStorage ThreadSafeStore
+		keyFunc KeyFunc
+	}
+	*/
 	GetIndexer() Indexer
 }
 
