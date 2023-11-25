@@ -328,6 +328,8 @@ func WaitForCacheSync(stopCh <-chan struct{}, cacheSyncs ...InformerSynced) bool
 // notifications to each of the informer's clients.
 type sharedIndexInformer struct {
 	// 本地的存储
+	// NewIndexer(DeletionHandlingMetaNamespaceKeyFunc, indexers) vendor/k8s.io/client-go/tools/cache/store.go:329
+	// func NewIndexer(keyFunc KeyFunc, indexers Indexers) Indexer {}
 	indexer Indexer
 
 	// 这个controller 里面包含了Reflector,也就是包含了Delta FIFO

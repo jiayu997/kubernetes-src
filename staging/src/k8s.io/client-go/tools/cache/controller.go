@@ -333,10 +333,10 @@ func (r FilteringResourceEventHandler) OnDelete(obj interface{}) {
 	r.Handler.OnDelete(obj)
 }
 
-// DeletionHandlingMetaNamespaceKeyFunc checks for
-// DeletedFinalStateUnknown objects before calling
-// MetaNamespaceKeyFunc.
+// DeletionHandlingMetaNamespaceKeyFunc checks for DeletedFinalStateUnknown objects before calling MetaNamespaceKeyFunc.
+// 初始化shareindexinformer的时候，默认记得object计算函数
 func DeletionHandlingMetaNamespaceKeyFunc(obj interface{}) (string, error) {
+	// 判断对象是否处于删除状态
 	if d, ok := obj.(DeletedFinalStateUnknown); ok {
 		return d.Key, nil
 	}

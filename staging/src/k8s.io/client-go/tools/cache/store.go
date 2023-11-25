@@ -102,6 +102,7 @@ type ExplicitKey string
 // packing/unpacking won't be necessary.
 
 // MetaNamespaceKeyFunc object 计算函数
+// 默认的一个object key计算函数
 func MetaNamespaceKeyFunc(obj interface{}) (string, error) {
 	if key, ok := obj.(ExplicitKey); ok {
 		return string(key), nil
@@ -146,6 +147,7 @@ func SplitMetaNamespaceKey(key string) (namespace, name string, err error) {
 // cache 实现了Indexer,这个玩意实际上就是缓存
 type cache struct {
 	// cacheStorage bears the burden of thread safety for the cache
+	// 真正底层存放数据的底层结构
 	cacheStorage ThreadSafeStore
 	// keyFunc is used to make the key for objects stored in and retrieved from items, and
 	// should be deterministic.
@@ -215,7 +217,7 @@ indices: {
 	"namespace": {"default": {"pod-1","pod-2"},"devops": {"pod-3","pod-4"},},
 	"label": {"labelA": {"pod-1","pod-2"}}
 }
- */
+*/
 
 // 返回indexName索引器下object的索引键下面对应的所有object,例如default下面的pod-1,pod-2
 func (c *cache) Index(indexName string, obj interface{}) ([]interface{}, error) {
@@ -227,10 +229,11 @@ indexName = 索引器名称
 indexValue = 索引健
 []string = 某个索引器下某个索引健对应的对象健集合
 作用：返回某索引器下面，某个索引健对应的所有对象健集合
-indices: {
-	"namespace": {"default": {"pod-1","pod-2"},"devops": {"pod-3","pod-4"},},
-	"label": {"labelA": {"pod-1","pod-2"}}
-}
+
+	indices: {
+		"namespace": {"default": {"pod-1","pod-2"},"devops": {"pod-3","pod-4"},},
+		"label": {"labelA": {"pod-1","pod-2"}}
+	}
 
 indexKeys 相当于 传入 indexName=索引器名称(namespace)、indexValue=索引键(default) 然后索取到所有的对象键 ["pod-1","pod-2"]
 indexKeys 与 Index区别在于，index是传入的object,索引键还需要在计算一下
@@ -322,6 +325,7 @@ func NewStore(keyFunc KeyFunc) Store {
 // deployment/xx informer 默认 附带了一个默认 namespace和MetaNamespaceIndexFunc索引函数
 // 位置： vendor/k8s.io/client-go/informers/apps/v1/deployment.go:90
 // indexers = cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}
+// keyFunc 默认在初始化sharedIndexInformer的时候是 func DeletionHandlingMetaNamespaceKeyFunc(obj interface{}) (string, error) {} staging/src/k8s.io/client-go/tools/cache/controller.go:339
 func NewIndexer(keyFunc KeyFunc, indexers Indexers) Indexer {
 	return &cache{
 		// Indices默认是空的
