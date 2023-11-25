@@ -60,6 +60,7 @@ type Store interface {
 
 	// Replace will delete the contents of the store, using instead the given list.
 	// Store takes ownership of the list, you should not reference it after calling this function.
+	// Replace 使用[]interface{}更新本地缓存，同时会把本地缓存删除
 	Replace([]interface{}, string) error
 
 	// Resync is meaningless in the terms appearing here but has
@@ -171,6 +172,7 @@ func (c *cache) Add(obj interface{}) error {
 
 // Update sets an item in the cache to its updated state.
 func (c *cache) Update(obj interface{}) error {
+	// 基于obj计算出object key
 	key, err := c.keyFunc(obj)
 	if err != nil {
 		return KeyError{obj, err}
@@ -292,6 +294,7 @@ func (c *cache) GetByKey(key string) (item interface{}, exists bool, err error) 
 // after calling this function.
 // list = []object
 // 基于 []object更新底层缓存
+// Replace 使用[]interface{}更新本地缓存，同时会把本地缓存删除
 func (c *cache) Replace(list []interface{}, resourceVersion string) error {
 	items := make(map[string]interface{}, len(list))
 	for _, item := range list {

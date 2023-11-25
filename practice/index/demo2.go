@@ -1,4 +1,4 @@
-package ingress_controller_demo1
+package index
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 const (
 	INDEXERSTOREGETINDEXERLIST = false
 	INDEXERSTOREGETINDEXERGET  = false
-	INDEXERSTORECURD           = true
+	INDEXERSTOREAUD            = true
 	EVENT_HANDLER              = false
 )
 
@@ -50,13 +50,18 @@ func TestDeploymentInformer() {
 
 	if INDEXERSTOREGETINDEXERLIST {
 		// 查询indexer下面目前有哪些deployment List
-		fmt.Println("indexerStoreGetIndexerList")
+		fmt.Println("indexerGetIndexerList")
 		indexerStoreGetIndexerList(deploymentShareIndexInformer)
 	}
 
 	if INDEXERSTOREGETINDEXERGET {
-		fmt.Println("indexerStoreGetIndexerGet")
+		fmt.Println("indexerGetIndexerGet")
 		indexerStoreGetIndexerGet(clientSet, deploymentShareIndexInformer)
+	}
+
+	if INDEXERSTOREAUD {
+		fmt.Println("indexerAUD")
+		indexerStoreAUD(deploymentShareIndexInformer)
 	}
 
 	// 关闭,传递一个信号过去，让informer/controller关闭
@@ -82,19 +87,70 @@ type Indexer interface {
 
 // 存储添加/更新/删除
 func indexerStoreAUD(deploymentShareIndexInformer cache.SharedIndexInformer) {
-	fmt.Println(1)
-}
+	//currentObjectKey := deploymentShareIndexInformer.GetIndexer().ListKeys()
+	testDeployment := getDeployment()
+	testDeploymentObjectKey, err := cache.DeletionHandlingMetaNamespaceKeyFunc(&testDeployment)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("Object Key Wait Add: ", testDeploymentObjectKey)
 
-func indexerStoreAdd(deploymentShareIndexInformer cache.SharedIndexInformer) {
-	fmt.Println(1)
-}
+	// 将deployment 插入本地缓存
+	err = deploymentShareIndexInformer.GetIndexer().Add(&testDeployment)
+	if err != nil {
+		fmt.Println("Object Key Add Failed: ", testDeploymentObjectKey, err)
+	}
 
-func indexerStoreUpdate(deploymentShareIndexInformer cache.SharedIndexInformer) {
-	fmt.Println(1)
-}
+	// 查看插入的deployment在缓存中是否存在
+	_, exist, err := deploymentShareIndexInformer.GetIndexer().Get(&testDeployment)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if exist {
+		fmt.Println("Object Key Exist: ", testDeploymentObjectKey)
+	} else {
+		fmt.Println("Object Key Not Exist: ", testDeploymentObjectKey)
+	}
 
-func indexerStoreDelete(deploymentShareIndexInformer cache.SharedIndexInformer) {
-	fmt.Println(1)
+	// 修改testDeployment副本数,然后更新本地缓存
+	var replicas int32 = 2
+	testDeployment.Spec.Replicas = &replicas
+	err = deploymentShareIndexInformer.GetIndexer().Update(&testDeployment)
+	if err != nil {
+		log.Fatal("Object Key Update Failed: ", testDeploymentObjectKey, err)
+	}
+	tmp, _, _ := deploymentShareIndexInformer.GetIndexer().GetByKey(testDeploymentObjectKey)
+	dp, _ := tmp.(*appsv1.Deployment)
+	fmt.Println("Object Current Replicas: ", *dp.Spec.Replicas)
+
+	// 将本地缓存的testDeployment删除
+	err = deploymentShareIndexInformer.GetIndexer().Delete(&testDeployment)
+	if err != nil {
+		log.Fatal("Object Key Delete Failed: ", testDeploymentObjectKey, err)
+	} else {
+		fmt.Println("Object Key Delete Success: ", testDeploymentObjectKey)
+	}
+
+	// 将本地缓存重新同步一次
+	d1 := getDeployment()
+	d1.Name = "busybox1"
+
+	d2 := getDeployment()
+	d2.Name = "busybox2"
+
+	testDeploymentList := []interface{}{
+		&d1,
+		&d2,
+	}
+	err = deploymentShareIndexInformer.GetIndexer().Replace(testDeploymentList, "")
+	if err != nil {
+		log.Fatal("Indexer Replace Failed")
+	} else {
+		fmt.Println("Indexer Replace Success")
+	}
+
+	// 查看更新本地缓存后的数据: [devops/busybox1 devops/busybox2]
+	fmt.Println(deploymentShareIndexInformer.GetIndexer().ListKeys())
 }
 
 func indexerStoreGetIndexerList(deploymentShareIndexInformer cache.SharedIndexInformer) {
@@ -148,7 +204,7 @@ func indexerStoreGetIndexerGet(clientSet *kubernetes.Clientset, deploymentShareI
 	fmt.Printf("Get Namespae: %s DeploymentName: %s Exist: %v\n", deploymentMap[objectKey].Namespace, deploymentMap[objectKey].Name, exist)
 }
 
-func indexerStoreGetReplace() {
+func indexerGetReplace() {
 	fmt.Println(1)
 }
 
@@ -173,4 +229,16 @@ func eventHandler(deploymentShareIndexInformer cache.SharedIndexInformer) {
 			fmt.Printf("Delete Namesapce: %s Name: %s\n", deployment.Namespace, deployment.Name)
 		},
 	})
+}
+
+func indexerAdd(deploymentShareIndexInformer cache.SharedIndexInformer) {
+	fmt.Println(1)
+}
+
+func indexerUpdate(deploymentShareIndexInformer cache.SharedIndexInformer) {
+	fmt.Println(1)
+}
+
+func indexerDelete(deploymentShareIndexInformer cache.SharedIndexInformer) {
+	fmt.Println(1)
 }

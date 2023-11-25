@@ -97,11 +97,16 @@ func (c *threadSafeMap) Add(key string, obj interface{}) {
 }
 
 // 和Add实际一样的
+// 使用object key 更新本地Object对象
 func (c *threadSafeMap) Update(key string, obj interface{}) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	oldObject := c.items[key]
+
+	// 更新本地缓存实际存放的数据
 	c.items[key] = obj
+
+	// 更新本地索引
 	c.updateIndices(oldObject, obj, key)
 }
 

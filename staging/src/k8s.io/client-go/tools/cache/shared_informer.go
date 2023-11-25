@@ -525,10 +525,12 @@ func (s *sharedIndexInformer) LastSyncResourceVersion() string {
 	return s.controller.LastSyncResourceVersion()
 }
 
+// 返回本地的indexer, 只是indexer 扩展了Store
 func (s *sharedIndexInformer) GetStore() Store {
 	return s.indexer
 }
 
+// 返回本地的indexer
 func (s *sharedIndexInformer) GetIndexer() Indexer {
 	// s.indexer = func NewIndexer(keyFunc KeyFunc, indexers Indexers) Indexer {} -> type cache struct{} == vendor/k8s.io/client-go/tools/cache/store.go:147
 	return s.indexer

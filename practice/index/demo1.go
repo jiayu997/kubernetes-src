@@ -1,4 +1,4 @@
-package ingress_controller_demo1
+package index
 
 import (
 	"fmt"
