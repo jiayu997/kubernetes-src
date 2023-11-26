@@ -18,7 +18,8 @@ const (
 	INDEXERSTOREAUD            = false
 	EVENT_HANDLER              = false
 	INDEXERINDEX               = false
-	INDEXERINDEXKEYS           = true
+	INDEXERINDEXKEYS           = false
+	INDEXERGETINDEXERS         = true
 )
 
 func TestDeploymentInformer() {
@@ -74,6 +75,11 @@ func TestDeploymentInformer() {
 	if INDEXERINDEXKEYS {
 		fmt.Println("indexerIndexKeys")
 		indexerIndexKeys(clientSet, deploymentShareIndexInformer)
+	}
+
+	if INDEXERGETINDEXERS {
+		fmt.Println("indexerGetIndexers")
+		indexerGetIndexers(clientSet, deploymentShareIndexInformer)
 	}
 
 	// 关闭,传递一个信号过去，让informer/controller关闭
@@ -256,6 +262,35 @@ func indexerIndexKeys(clientSet *kubernetes.Clientset, deploymentShareIndexInfor
 		log.Fatal(err)
 	}
 	fmt.Println(objectKeyList)
+}
+
+func indexerGetIndexers(clientSet *kubernetes.Clientset, deploymentShareIndexInformer cache.SharedIndexInformer) {
+	deployments, err := clientSet.AppsV1().Deployments("").List(context.TODO(), metav1.ListOptions{Limit: 10})
+	if err != nil {
+		log.Fatal(err)
+	}
+	// 取出一个deployment
+	deployment := deployments.Items[0]
+	deploymentObjectKey, err := cache.DeletionHandlingMetaNamespaceKeyFunc(&deployment)
+	fmt.Printf("取出Deployment Namespace: %s Name: %s, ObjectKey: %s\n", deployment.Namespace, deployment.Name, deploymentObjectKey)
+
+	// 获取索引与索引函数的映射
+	indexers := deploymentShareIndexInformer.GetIndexer().GetIndexers()
+
+	nameSpaceIndexFunc, ok := indexers[cache.NamespaceIndex]
+	if !ok {
+		log.Fatal("namespace not have indexFunc")
+	}
+	indexValue, err := nameSpaceIndexFunc(&deployment)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(indexValue)
+	allObjectKey, err := deploymentShareIndexInformer.GetIndexer().IndexKeys(cache.NamespaceIndex, indexValue[0])
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("索引: %s 使用对应的索引函数计算deployment: %s 基于这个deployment获取它命名空间下面其他所有的对象键: %v", cache.NamespaceIndex, deploymentObjectKey, allObjectKey)
 }
 
 // 为底层索引添加索引函数, 只能在informer未启动之前添加

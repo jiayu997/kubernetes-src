@@ -293,9 +293,13 @@ func (c *threadSafeMap) IndexKeys(indexName, indexedValue string) ([]string, err
 	// 获取到index
 	index := c.indices[indexName]
 
-	//fmt.Printf("---------------%v",index)
+	//for key,value := range c.indices {
+	//	fmt.Printf("indexName: %s Index: %v\n",key,value)
+	//}
+
 	// 根据索引健返回sets集合
 	set := index[indexedValue]
+	fmt.Printf("%v\n",set)
 
 	// 返回某个索引器下某个索引健对应的对象健集合
 	return set.List(), nil

@@ -53,6 +53,7 @@ type Indexer interface {
 	IndexKeys(indexName, indexedValue string) ([]string, error)
 
 	// ListIndexFuncValues returns all the indexed values of the given index
+	// 返回某个索引器下有哪些索引健, 例如返回namespace索引器下的所有索引键(default,devops)
 	ListIndexFuncValues(indexName string) []string
 
 	// ByIndex returns the stored objects whose set of indexed values
