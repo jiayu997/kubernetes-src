@@ -48,6 +48,7 @@ func NewDeploymentLister(indexer cache.Indexer) DeploymentLister {
 }
 
 // List lists all Deployments in the indexer.
+// 返回本地缓存中所有的deployment
 func (s *deploymentLister) List(selector labels.Selector) (ret []*v1.Deployment, err error) {
 	err = cache.ListAll(s.indexer, selector, func(m interface{}) {
 		ret = append(ret, m.(*v1.Deployment))
