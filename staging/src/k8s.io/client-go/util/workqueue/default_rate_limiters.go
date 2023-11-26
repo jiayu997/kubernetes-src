@@ -24,13 +24,18 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// 限速器接口
 type RateLimiter interface {
 	// When gets an item and gets to decide how long that item should wait
+	// 返回元素需要等待多长时间
 	When(item interface{}) time.Duration
-	// Forget indicates that an item is finished being retried.  Doesn't matter whether it's for failing
-	// or for success, we'll stop tracking it
+
+	// Forget indicates that an item is finished being retried.  Doesn't matter whether it's for failing or for success, we'll stop tracking it
+	// 抛弃该元素，意味着该元素已经被处理了
 	Forget(item interface{})
+
 	// NumRequeues returns back how many failures the item has had
+	// 元素放入队列多少次了
 	NumRequeues(item interface{}) int
 }
 
@@ -45,6 +50,7 @@ func DefaultControllerRateLimiter() RateLimiter {
 }
 
 // BucketRateLimiter adapts a standard bucket to the workqueue ratelimiter API
+// BucketRateLimiter是利用golang.org.x.time.rate.Limiter实现固定速率(qps)的限速器，至于golang.org.x.time.rate.Limiter的实现原理读者可以自行分析，此处只对BucketRateLimiter做说明
 type BucketRateLimiter struct {
 	*rate.Limiter
 }
@@ -65,11 +71,17 @@ func (r *BucketRateLimiter) Forget(item interface{}) {
 // ItemExponentialFailureRateLimiter does a simple baseDelay*2^<num-failures> limit
 // dealing with max failures and expiration are up to the caller
 type ItemExponentialFailureRateLimiter struct {
+	// 互斥锁
 	failuresLock sync.Mutex
-	failures     map[interface{}]int
 
+	// 记录每个元素错误次数，每调用一次When累加一次
+	failures map[interface{}]int
+
+	// 元素延迟基数，算法后面会有说明
 	baseDelay time.Duration
-	maxDelay  time.Duration
+
+	// 元素最大的延迟时间
+	maxDelay time.Duration
 }
 
 var _ RateLimiter = &ItemExponentialFailureRateLimiter{}
@@ -90,15 +102,18 @@ func (r *ItemExponentialFailureRateLimiter) When(item interface{}) time.Duration
 	r.failuresLock.Lock()
 	defer r.failuresLock.Unlock()
 
+	// 累加错误计数，比较好理解
 	exp := r.failures[item]
 	r.failures[item] = r.failures[item] + 1
 
 	// The backoff is capped such that 'calculated' value never overflows.
+	// 通过错误次数计算延迟时间，公式是2^i * baseDelay,按指数递增，符合Exponential名字
 	backoff := float64(r.baseDelay.Nanoseconds()) * math.Pow(2, float64(exp))
 	if backoff > math.MaxInt64 {
 		return r.maxDelay
 	}
 
+	// 计算后的延迟值和最大延迟值二者取最小值
 	calculated := time.Duration(backoff)
 	if calculated > r.maxDelay {
 		return r.maxDelay
@@ -122,13 +137,22 @@ func (r *ItemExponentialFailureRateLimiter) Forget(item interface{}) {
 }
 
 // ItemFastSlowRateLimiter does a quick retry for a certain number of attempts, then a slow retry after that
+// ItemFastSlowRateLimiter和ItemExponentialFailureRateLimiter很像，都是用于错误尝试的，但是ItemFastSlowRateLimiter的限速策略是尝试次数超过阈值用长延迟，否则用短延迟
 type ItemFastSlowRateLimiter struct {
+	// 互斥锁
 	failuresLock sync.Mutex
-	failures     map[interface{}]int
 
+	// 错误次数计数
+	failures map[interface{}]int
+
+	// 错误尝试阈值
 	maxFastAttempts int
-	fastDelay       time.Duration
-	slowDelay       time.Duration
+
+	// 短延迟时间
+	fastDelay time.Duration
+
+	// 长延迟时间
+	slowDelay time.Duration
 }
 
 var _ RateLimiter = &ItemFastSlowRateLimiter{}
@@ -172,6 +196,7 @@ func (r *ItemFastSlowRateLimiter) Forget(item interface{}) {
 // MaxOfRateLimiter calls every RateLimiter and returns the worst case response
 // When used with a token bucket limiter, the burst could be apparently exceeded in cases where particular items
 // were separately delayed a longer time.
+// MaxOfRateLimiter是一个非常有意思的限速器，他内部有多个限速器，每次返回最悲观的。何所谓最悲观的，比如内部有三个限速器，When()接口返回的就是三个限速器里面延迟最大的
 type MaxOfRateLimiter struct {
 	limiters []RateLimiter
 }

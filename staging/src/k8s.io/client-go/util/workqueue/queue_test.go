@@ -52,6 +52,7 @@ func TestBasic(t *testing.T) {
 			go func(i int) {
 				defer producerWG.Done()
 				for j := 0; j < 50; j++ {
+					// 加数据
 					test.queue.Add(i)
 					time.Sleep(time.Millisecond)
 				}
@@ -66,6 +67,7 @@ func TestBasic(t *testing.T) {
 			go func(i int) {
 				defer consumerWG.Done()
 				for {
+					// 从queue 取出一个数据处理
 					item, quit := test.queue.Get()
 					if item == "added after shutdown!" {
 						t.Errorf("Got an item added after shutdown.")
@@ -76,6 +78,7 @@ func TestBasic(t *testing.T) {
 					t.Logf("Worker %v: begin processing %v", i, item)
 					time.Sleep(3 * time.Millisecond)
 					t.Logf("Worker %v: done processing %v", i, item)
+					// 标志这个object 处理完成
 					test.queue.Done(item)
 				}
 			}(i)

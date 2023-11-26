@@ -25,12 +25,24 @@ import (
 
 // 通用队列的接口
 type Interface interface {
+	// 向队列中添加一个元素，interface{}类型，说明可以添加任何类型的元素
 	Add(item interface{})
+
+	// 队列长度，就是元素的个数
 	Len() int
+
+	// 从队列中获取一个元素，双返回值，这个和chan的<-很像，第二个返回值告知队列是否已经关闭了
 	Get() (item interface{}, shutdown bool)
+
+	// 告知队列该元素已经处理完了
 	Done(item interface{})
+
+	// 关闭队列
 	ShutDown()
+
 	ShutDownWithDrain()
+
+	// 查询队列是否正在关闭
 	ShuttingDown() bool
 }
 
@@ -41,6 +53,7 @@ func New() *Type {
 
 func NewNamed(name string) *Type {
 	rc := clock.RealClock{}
+	// 初始化一个queue
 	return newQueue(
 		rc,
 		globalMetricsFactory.newQueueMetrics(name, rc),
@@ -70,11 +83,11 @@ func newQueue(c clock.WithTicker, metrics queueMetrics, updatePeriod time.Durati
 const defaultUnfinishedWorkUpdatePeriod = 500 * time.Millisecond
 
 // Type is a work queue (see the package comment).
+// Type 实现了 Interface 通用对接接口
 type Type struct {
-	// queue defines the order in which we will work on items. Every
-	// element of queue should be in the dirty set and not in the
-	// processing set.
-	// workqueue正在存储数据
+	// queue defines the order in which we will work on items. Every element of queue should be in the dirty set and not in the processing set.
+	// workqueue 正在存储数据
+	// t = interface{}
 	queue []t
 
 	// dirty defines all of the items that need to be processed.
@@ -85,7 +98,8 @@ type Type struct {
 	// These things may be simultaneously in the dirty set. When we finish
 	// processing something and remove it from this set, we'll check if
 	// it's in the dirty set, and if so, add it to the queue.
-	// 正在处理的一个集合
+	// 正在处理的元素集合
+	// 有些元素可能同时存在processing和dirty中，当处理完这个元素，从集合删除的时候，如果发现元素还在dirty集合中，在此将其添加至queue队列中
 	processing set
 
 	cond *sync.Cond
@@ -93,7 +107,7 @@ type Type struct {
 	shuttingDown bool
 	drain        bool
 
-	// 指标
+	// 这个metrics和prometheus的metrics概念相同
 	metrics queueMetrics
 
 	unfinishedWorkUpdatePeriod time.Duration
@@ -125,10 +139,11 @@ func (s set) len() int {
 func (q *Type) Add(item interface{}) {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
+	// 如果正在关闭就不处理加数据
 	if q.shuttingDown {
 		return
 	}
-	// 判断添加的数据是否在脏数据集合中
+	// 判断添加的数据是否在脏数据集合中, 如果在就不加入了
 	// 这里实现了去重(queue是[]类型无法去重效果为O(n))
 	if q.dirty.has(item) {
 		return
@@ -139,12 +154,12 @@ func (q *Type) Add(item interface{}) {
 	// 添加到脏数据集合中
 	q.dirty.insert(item)
 
-	// 判断数据是否正在处理
+	// 判断数据是否正在处理, 如何数据正在处理就return
 	if q.processing.has(item) {
 		return
 	}
 
-	// 将数据添加到queue中
+	// 将数据添加到queue中, 不是在processing队列中
 	q.queue = append(q.queue, item)
 	q.cond.Signal()
 }
@@ -152,6 +167,7 @@ func (q *Type) Add(item interface{}) {
 // Len returns the current queue length, for informational purposes only. You
 // shouldn't e.g. gate a call to Add() or Get() on Len() being a particular
 // value, that can't be synchronized properly.
+// 返回队列长度
 func (q *Type) Len() int {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
@@ -169,12 +185,12 @@ func (q *Type) Get() (item interface{}, shutdown bool) {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
 
-	// 当队列长度为0且为关闭时
+	// 当队列长度为0且不是正在关闭(意味着只是暂时还没有数据进来，有数据add进来后，会唤醒wait())
 	for len(q.queue) == 0 && !q.shuttingDown {
 		q.cond.Wait()
 	}
 
-	// 队列长度为0
+	// 队列长度为0,且关闭了
 	if len(q.queue) == 0 {
 		// We must be shutting down.
 		return nil, true
