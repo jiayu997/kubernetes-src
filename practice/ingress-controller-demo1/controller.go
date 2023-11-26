@@ -168,14 +168,38 @@ func (c *Controller) processServiceItem(cEvent *Cevent) bool {
 	return true
 }
 
-func (c *Controller) processIngressItem(cEvent *Cevent) bool {
-	return true
-}
-
 func (c *Controller) serviceAddAndUpdateHandlerFunc(service *v1.Service) bool {
+	// 获取service的annotation
+	annotationMap := service.GetAnnotations()
+	ingressSwitch, ok := annotationMap["ingress"]
+	// 当service没有这个annotation或者ingress != true时，不用处理
+	if !ok || ingressSwitch == "false" {
+		return true
+	}
+
+	// 获取ingress
+	ingress, err := c.ingressLister.Ingresses(service.Namespace).Get(service.Name)
+	if err != nil && !errors.IsNotFound(err) {
+		return false
+	}
+
+	// 创建ingress(ingress不存在)
+	if ok && errors.IsNotFound(err) {
+
+	}
+
+	// ingress已经存在
+	if ok {
+
+	}
+
 	return true
 }
 
 func (c *Controller) serviceDeleteHandlerFunc(service *v1.Service) bool {
+	return true
+}
+
+func (c *Controller) processIngressItem(cEvent *Cevent) bool {
 	return true
 }
