@@ -58,6 +58,9 @@ type Indexer interface {
 
 	// ByIndex returns the stored objects whose set of indexed values
 	// for the named index includes the given indexed value
+	// indexName = 索引器名称
+	// indexValue = 索引健名称
+	// 返回某个索引器下某个索引健的object list
 	ByIndex(indexName, indexedValue string) ([]interface{}, error)
 
 	// GetIndexer return the indexers
