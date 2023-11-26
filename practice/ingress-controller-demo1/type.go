@@ -13,3 +13,19 @@ type Controller struct {
 	ingressLister networkV1.IngressLister
 	queue         workqueue.RateLimitingInterface
 }
+
+const (
+	CEVENTADD    event  = "ADD"
+	CEVENTDELETE event  = "DELETE"
+	CEVENTUPDATE event  = "UPDATE"
+	SERVICE      string = "Service"
+	INGRESS      string = "Ingress"
+)
+
+type event string
+
+type Cevent struct {
+	objectKey string
+	Type      event
+	Kind      string
+}

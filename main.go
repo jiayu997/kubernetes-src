@@ -1,7 +1,9 @@
 package main
 
-import "k8s.io/kubernetes/practice/index"
+import (
+	ingress_controller_demo1 "k8s.io/kubernetes/practice/ingress-controller-demo1"
+)
 
 func main() {
-	index.TestDeploymentInformer()
+	ingress_controller_demo1.ControllerMain()
 }

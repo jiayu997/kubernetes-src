@@ -1,5 +1,5 @@
 ### controller说明
 1. watch service/ingress
-2. service有xx annotation -> create ingress
-3. service有xx annotation -> delete ingress
-3. ingress被删除 -> delete service
+2. 当创建一个service时，如果包含ingress: true annotation则创建一个service
+2. 当删除一个service时，如果包含ingress: true annotation则删除对应的ingress
+3. 当更新一个service时，如果有ingress: true annotation 查询是否存在ingress,如果存在进行状态协调、如果不存在创建, 如果不存在ingress: true 不用管
