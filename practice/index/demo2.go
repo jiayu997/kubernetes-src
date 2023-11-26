@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	appsv1 "k8s.io/api/apps/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
@@ -20,8 +21,9 @@ const (
 	INDEXERINDEX               = false
 	INDEXERINDEXKEYS           = false
 	INDEXERGETINDEXERS         = false
-	LISTINDEXFUNCVALUES        = true
-	INDEXERBYINDEX             = true
+	LISTINDEXFUNCVALUES        = false
+	INDEXERBYINDEX             = false
+	INDEXERADDINDEXERS         = true
 )
 
 func TestDeploymentInformer() {
@@ -39,6 +41,11 @@ func TestDeploymentInformer() {
 		// add EventHandler function
 		fmt.Println("eventHandler-eventHandler")
 		eventHandler(deploymentShareIndexInformer)
+	}
+	// 添加索引函数需要在启动前添加
+	if INDEXERADDINDEXERS {
+		fmt.Println("indexerAddIndexers")
+		indexerAddIndexers(clientSet, deploymentShareIndexInformer)
 	}
 
 	//deploymentIndexer := deploymentInformer.Lister()
@@ -338,8 +345,33 @@ func indexerByIndex(clientSet *kubernetes.Clientset, deploymentShareIndexInforme
 }
 
 // 为底层索引添加索引函数, 只能在informer未启动之前添加
-func addIndexers(deploymentShareIndexInformer cache.SharedIndexInformer) {
-	fmt.Println(1)
+func indexerAddIndexers(clientSet *kubernetes.Clientset, deploymentShareIndexInformer cache.SharedIndexInformer) {
+	labelIndexFunc := func(obj interface{}) ([]string, error) {
+		meta, err := meta.Accessor(obj)
+		if err != nil {
+			return []string{""}, fmt.Errorf("object has no meta: %v", err)
+		}
+
+		labels := meta.GetLabels()
+		labelsLen := len(labels)
+		if labelsLen == 0 {
+			return []string{}, nil
+		}
+
+		indexValue := make([]string, 0)
+		for key, value := range labels {
+			indexValue = append(indexValue, key+"/"+value)
+		}
+
+		return indexValue, nil
+	}
+	//deployment := getDeployment()
+	//labelIndexFunc(&deployment)
+	// 这里只设置了一个，缓存底层逻辑是append
+	indexers := map[string]cache.IndexFunc{
+		"label": labelIndexFunc,
+	}
+	_ = deploymentShareIndexInformer.AddIndexers(indexers)
 }
 
 // 添加事件处理函数

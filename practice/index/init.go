@@ -36,6 +36,11 @@ func getDeployment() appsv1.Deployment {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "busybox",
 			Namespace: "devops",
+			Labels: map[string]string{
+				"app":       "busybox",
+				"monitor":   "true",
+				"logsearch": "true",
+			},
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
