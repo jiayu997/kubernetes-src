@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	v1 "k8s.io/api/core/v1"
+	networkv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/runtime"
@@ -170,6 +171,42 @@ func (c *Controller) processServiceItem(cEvent *Cevent) bool {
 	return true
 }
 
+func (c *Controller) processIngressItem(cEvent *Cevent) bool {
+	ingressNamespace, name, err := cache.SplitMetaNamespaceKey(cEvent.objectKey)
+	if err != nil {
+		fmt.Printf("%v\n", err)
+		return false
+	}
+
+	// 获取ingress
+	ingress, err := c.ServiceLister.Services(ingressNamespace).Get(name)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return true
+		}
+		fmt.Printf("%v\n", err)
+		return false
+	}
+
+	switch cEvent.Type {
+	case CEVENTADD:
+		if !c.ingressAddAndUpdateHandlerFunc(ingress) {
+			return false
+		}
+	case CEVENTUPDATE:
+		if !c.ingressAddAndUpdateHandlerFunc(ingress) {
+			return false
+		}
+	case CEVENTDELETE:
+		if !c.ingressDeleteHandlerFunc(ingress) {
+			return false
+		}
+	default:
+		return false
+	}
+	return true
+}
+
 func (c *Controller) serviceAddAndUpdateHandlerFunc(service *v1.Service) bool {
 	// 获取service的annotation
 	annotationMap := service.GetAnnotations()
@@ -218,7 +255,12 @@ func (c *Controller) serviceDeleteHandlerFunc(service *v1.Service) bool {
 	// service创建ingress时，有OwnerReferences，删除service会自动删除ingress
 	return true
 }
+func (c *Controller) ingressAddAndUpdateHandlerFunc(ingress *networkv1.Ingress) bool {
+	// ingress 添加|更新判断下面逻辑
+	// 略
+	return true
+}
 
-func (c *Controller) processIngressItem(cEvent *Cevent) bool {
+func (c *Controller) ingressDeleteHandlerFunc(ingress *networkv1.Ingress) bool {
 	return true
 }
