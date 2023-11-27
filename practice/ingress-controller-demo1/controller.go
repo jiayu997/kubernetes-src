@@ -179,7 +179,7 @@ func (c *Controller) processIngressItem(cEvent *Cevent) bool {
 	}
 
 	// 获取ingress
-	ingress, err := c.ServiceLister.Services(ingressNamespace).Get(name)
+	ingress, err := c.IngressLister.Ingresses(ingressNamespace).Get(name)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return true
