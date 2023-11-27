@@ -228,6 +228,7 @@ func ParseGroupVersion(gv string) (GroupVersion, error) {
 }
 
 // WithKind creates a GroupVersionKind based on the method receiver's GroupVersion and the passed Kind.
+// 传入GV和Kind信息生成GVK
 func (gv GroupVersion) WithKind(kind string) GroupVersionKind {
 	return GroupVersionKind{Group: gv.Group, Version: gv.Version, Kind: kind}
 }

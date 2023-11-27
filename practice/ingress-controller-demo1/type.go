@@ -8,10 +8,10 @@ import (
 )
 
 type Controller struct {
-	client        *kubernetes.Clientset
-	serviceLister coreV1.ServiceLister
-	ingressLister networkV1.IngressLister
-	queue         workqueue.RateLimitingInterface
+	Client        *kubernetes.Clientset
+	ServiceLister coreV1.ServiceLister
+	IngressLister networkV1.IngressLister
+	Queue         workqueue.RateLimitingInterface
 }
 
 const (

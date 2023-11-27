@@ -1,9 +1,11 @@
 package ingress_controller_demo1
 
 import (
+	"context"
 	"fmt"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	coreV1 "k8s.io/client-go/informers/core/v1"
 	networkV1 "k8s.io/client-go/informers/networking/v1"
@@ -62,15 +64,15 @@ func (c *Controller) enqueue(object interface{}, e event, kind string) {
 	}
 
 	// key放到队列中去
-	c.queue.Add(&cEvent)
+	c.Queue.Add(&cEvent)
 }
 
 func newController(clientSet *kubernetes.Clientset, serviceInformer coreV1.ServiceInformer, ingressInformer networkV1.IngressInformer) *Controller {
 	c := Controller{
-		client:        clientSet,
-		serviceLister: serviceInformer.Lister(),
-		ingressLister: ingressInformer.Lister(),
-		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "Controller"),
+		Client:        clientSet,
+		ServiceLister: serviceInformer.Lister(),
+		IngressLister: ingressInformer.Lister(),
+		Queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "Controller"),
 	}
 
 	// 添加service event handler
@@ -101,13 +103,13 @@ func (c *Controller) worker() {
 
 func (c *Controller) processNextItem() bool {
 	// 获取队列中的key
-	item, shutdown := c.queue.Get()
+	item, shutdown := c.Queue.Get()
 	if shutdown {
 		return false
 	}
 
 	// 当我们处理完成后，要将这个itemKey标记为完成
-	defer c.queue.Done(item)
+	defer c.Queue.Done(item)
 
 	// 将队列取出来的数据丢到相应的函数里头去
 	cEvent, ok := item.(*Cevent)
@@ -139,7 +141,7 @@ func (c *Controller) processServiceItem(cEvent *Cevent) bool {
 	}
 
 	// 获取service
-	service, err := c.serviceLister.Services(serviceNamespace).Get(name)
+	service, err := c.ServiceLister.Services(serviceNamespace).Get(name)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return true
@@ -172,31 +174,48 @@ func (c *Controller) serviceAddAndUpdateHandlerFunc(service *v1.Service) bool {
 	// 获取service的annotation
 	annotationMap := service.GetAnnotations()
 	ingressSwitch, ok := annotationMap["ingress"]
+
 	// 当service没有这个annotation或者ingress != true时，不用处理
 	if !ok || ingressSwitch == "false" {
 		return true
 	}
 
 	// 获取ingress
-	ingress, err := c.ingressLister.Ingresses(service.Namespace).Get(service.Name)
+	ingress, err := c.IngressLister.Ingresses(service.Namespace).Get(service.Name)
 	if err != nil && !errors.IsNotFound(err) {
 		return false
 	}
 
 	// 创建ingress(ingress不存在)
 	if ok && errors.IsNotFound(err) {
-
+		ingress = constructIngress(service)
+		_, err := c.Client.NetworkingV1().Ingresses(service.Namespace).Create(context.TODO(), ingress, metaV1.CreateOptions{})
+		if err != nil {
+			fmt.Printf("Ingress Namespace: %s Name: %s Create Failed\nError: %v", ingress.Namespace, ingress.Name, err)
+			return false
+		} else {
+			fmt.Printf("Ingress Namespace: %s Name: %s Create Success\n", ingress.Namespace, ingress.Name)
+			return true
+		}
 	}
 
-	// ingress已经存在
+	// ingress已经存在,此时进行状态维护
 	if ok {
-
+		ingress = constructIngress(service)
+		_, err := c.Client.NetworkingV1().Ingresses(service.Namespace).Update(context.TODO(), ingress, metaV1.UpdateOptions{})
+		if err != nil {
+			fmt.Printf("Ingress Namespace: %s Name: %s Update Failed\nError: %v", ingress.Namespace, ingress.Name, err)
+			return false
+		} else {
+			fmt.Printf("Ingress Namespace: %s Name: %s Update Success\n", ingress.Namespace, ingress.Name)
+			return true
+		}
 	}
-
 	return true
 }
 
 func (c *Controller) serviceDeleteHandlerFunc(service *v1.Service) bool {
+	// service创建ingress时，有OwnerReferences，删除service会自动删除ingress
 	return true
 }
 
