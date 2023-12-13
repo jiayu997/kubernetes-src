@@ -27,8 +27,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/utils/buffer"
 	"k8s.io/utils/clock"
-
-	"k8s.io/klog/v2"
 )
 
 // SharedInformer provides eventually consistent linkage of its
@@ -173,6 +171,7 @@ type SharedInformer interface {
 	// informed by at least one full LIST of the authoritative state
 	// of the informer's object collection.  This is unrelated to "resync".
 	// 告诉使用者全量的对象是否已经同步到了本地存储中
+	// 判断的是Delta FIFO是否同步完成
 	HasSynced() bool
 
 	// LastSyncResourceVersion is the resource version observed when last synced with the underlying
@@ -206,11 +205,11 @@ type SharedIndexInformer interface {
 	AddIndexers(indexers Indexers) error
 
 	/*
-	返回的是
-	type cache struct {
-		cacheStorage ThreadSafeStore
-		keyFunc KeyFunc
-	}
+		返回的是
+		type cache struct {
+			cacheStorage ThreadSafeStore
+			keyFunc KeyFunc
+		}
 	*/
 	GetIndexer() Indexer
 }
@@ -248,9 +247,9 @@ func NewSharedIndexInformer(lw ListerWatcher, exampleObject runtime.Object, defa
 		// indexers = type Indexers map[string]IndexFunc
 		// indexer 实际为
 		// type cache struct {
-			//cacheStorage ThreadSafeStore
-			//keyFunc KeyFunc
-	    // }
+		//cacheStorage ThreadSafeStore
+		//keyFunc KeyFunc
+		// }
 		indexer:                         NewIndexer(DeletionHandlingMetaNamespaceKeyFunc, indexers),
 		listerWatcher:                   lw,            // k8s.io/client-go/informers/apps/v1/deployment.go 中的NewFilteredDeploymentInformer 默认初始化传进来的
 		objectType:                      exampleObject, // 需要list/watch对象类型
@@ -444,7 +443,8 @@ func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) {
 
 	// 实例化 informer 其他组件需求的 config 配置集
 	cfg := &Config{
-		Queue: fifo, // Delta FIFO
+		// Delta FIFO
+		Queue: fifo,
 		// reflector 内部会依赖这个做 list/watch 操作
 		ListerWatcher: s.listerWatcher,
 		// list/watch的资源类型： deployment/service/pod等
@@ -509,9 +509,13 @@ func (s *sharedIndexInformer) HasSynced() bool {
 	s.startedLock.Lock()
 	defer s.startedLock.Unlock()
 
+	// func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) 这个函数里面初始化了controller
 	if s.controller == nil {
 		return false
 	}
+
+	// func (c *controller) HasSynced() bool 实际调用的是这个: staging/src/k8s.io/client-go/tools/cache/controller.go:191
+	// 这里是判断Delta FIFO数据有没有同步完成，并不会阻塞
 	return s.controller.HasSynced()
 }
 

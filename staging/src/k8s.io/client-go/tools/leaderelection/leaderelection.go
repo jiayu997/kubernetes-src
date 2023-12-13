@@ -65,8 +65,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	rl "k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/utils/clock"
-
-	"k8s.io/klog/v2"
 )
 
 const (
@@ -111,6 +109,10 @@ func NewLeaderElector(lec LeaderElectionConfig) (*LeaderElector, error) {
 
 type LeaderElectionConfig struct {
 	// Lock is the resource that will be used for locking
+	// LeaderElectionConfig.lock 支持保存在以下三种资源中：
+	// 1.configmap
+	// 2.endpoint
+	// 3. lease
 	Lock rl.Interface
 
 	// LeaseDuration is the duration that non-leader candidates will
@@ -126,24 +128,31 @@ type LeaderElectionConfig struct {
 	// long waits in the scenario.
 	//
 	// Core clients default this value to 15 seconds.
+	// 持有锁的时间
 	LeaseDuration time.Duration
 	// RenewDeadline is the duration that the acting master will retry
 	// refreshing leadership before giving up.
 	//
 	// Core clients default this value to 10 seconds.
+	// 在更新租约的超时时间
 	RenewDeadline time.Duration
 	// RetryPeriod is the duration the LeaderElector clients should wait
 	// between tries of actions.
 	//
 	// Core clients default this value to 2 seconds.
+	// 竞争获取锁的时间
 	RetryPeriod time.Duration
 
 	// Callbacks are callbacks that are triggered during certain lifecycle
 	// events of the LeaderElector
+	// 1、OnStartedLeading 启动是执行的业务代码
+	// 2、OnStoppedLeading leader停止执行的方法
+	// 3、OnNewLeader 当产生新的leader后执行的方法
 	Callbacks LeaderCallbacks
 
 	// WatchDog is the associated health checker
 	// WatchDog may be null if it's not needed/configured.
+	// 进行监控检查
 	WatchDog *HealthzAdaptor
 
 	// ReleaseOnCancel should be set true if the lock should be released
@@ -151,6 +160,7 @@ type LeaderElectionConfig struct {
 	// ensure all code guarded by this lease has successfully completed
 	// prior to cancelling the context, or you may have two processes
 	// simultaneously acting on the critical path.
+	// leader退出时，是否执行release方法
 	ReleaseOnCancel bool
 
 	// Name is the name of the resource lock for debugging
@@ -164,12 +174,17 @@ type LeaderElectionConfig struct {
 //   - OnChallenge()
 type LeaderCallbacks struct {
 	// OnStartedLeading is called when a LeaderElector client starts leading
+	// 开始选举后跳用函数，由用户定义的
 	OnStartedLeading func(context.Context)
+
 	// OnStoppedLeading is called when a LeaderElector client stops leading
+	// 用户定义的
 	OnStoppedLeading func()
+
 	// OnNewLeader is called when the client observes a leader that is
 	// not the previously observed leader. This includes the first observed
 	// leader when the client starts.
+	// 用户定义的
 	OnNewLeader func(identity string)
 }
 
@@ -199,30 +214,40 @@ type LeaderElector struct {
 // stopped holding the leader lease
 func (le *LeaderElector) Run(ctx context.Context) {
 	defer runtime.HandleCrash()
+	// 调用丢失leader函数
 	defer func() {
 		le.config.Callbacks.OnStoppedLeading()
 	}()
 
+	// 不断的进行获得锁，如果获得锁成功则执行后面的方法，否则不断的进行重试
 	if !le.acquire(ctx) {
 		return // ctx signalled done
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	// 获取锁成功，当前进程变为leader，执行回调函数中的业务代码
 	go le.config.Callbacks.OnStartedLeading(ctx)
+
+	// 不断的循环进行进行租约的更新，保证锁一直被当前进行持有
 	le.renew(ctx)
 }
 
 // RunOrDie starts a client with the provided config or panics if the config
 // fails to validate. RunOrDie blocks until leader election loop is
 // stopped by ctx or it has stopped holding the leader lease
+// RunOrDime 会一直阻塞
 func RunOrDie(ctx context.Context, lec LeaderElectionConfig) {
 	le, err := NewLeaderElector(lec)
 	if err != nil {
 		panic(err)
 	}
+	// 健康检查调协
 	if lec.WatchDog != nil {
 		lec.WatchDog.SetLeaderElection(le)
 	}
+
+	// 启动leaderselector
 	le.Run(ctx)
 }
 
@@ -235,18 +260,24 @@ func (le *LeaderElector) GetLeader() string {
 
 // IsLeader returns true if the last observed leader was this client else returns false.
 func (le *LeaderElector) IsLeader() bool {
+	// 主要是用identity 来区分不通的锁
 	return le.getObservedRecord().HolderIdentity == le.config.Lock.Identity()
 }
 
 // acquire loops calling tryAcquireOrRenew and returns true immediately when tryAcquireOrRenew succeeds.
 // Returns false if ctx signals done.
 func (le *LeaderElector) acquire(ctx context.Context) bool {
+	// 基于传过来的ctx，生产一个新的ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	succeeded := false
+	// 获取锁的编号：Identity，ResourceLockConfig.Identity
 	desc := le.config.Lock.Describe()
 	klog.Infof("attempting to acquire leader lease %v...", desc)
+
+	// 循环等待
 	wait.JitterUntil(func() {
+		// 尝试去获取锁/或者更新租期
 		succeeded = le.tryAcquireOrRenew(ctx)
 		le.maybeReportTransition()
 		if !succeeded {
@@ -317,6 +348,7 @@ func (le *LeaderElector) release() bool {
 func (le *LeaderElector) tryAcquireOrRenew(ctx context.Context) bool {
 	now := metav1.Now()
 	leaderElectionRecord := rl.LeaderElectionRecord{
+		// 唯一标识
 		HolderIdentity:       le.config.Lock.Identity(),
 		LeaseDurationSeconds: int(le.config.LeaseDuration / time.Second),
 		RenewTime:            now,
@@ -324,30 +356,39 @@ func (le *LeaderElector) tryAcquireOrRenew(ctx context.Context) bool {
 	}
 
 	// 1. obtain or create the ElectionRecord
+	// 从k8s资源中获取原有的锁对象, 这二个对象实际上都一样，后边这个是前边这个的部分序列化
 	oldLeaderElectionRecord, oldLeaderElectionRawRecord, err := le.config.Lock.Get(ctx)
 	if err != nil {
 		if !errors.IsNotFound(err) {
 			klog.Errorf("error retrieving resource lock %v: %v", le.config.Lock.Describe(), err)
 			return false
 		}
+
+		// 当没有这个lease对象的时候，创建这个lease对象
 		if err = le.config.Lock.Create(ctx, leaderElectionRecord); err != nil {
 			klog.Errorf("error initially creating leader election record: %v", err)
 			return false
 		}
 
+		// 对使用leaderElectionRecord 深拷贝否复制给 LeaderElector.observedRecord
 		le.setObservedRecord(&leaderElectionRecord)
 
 		return true
 	}
 
 	// 2. Record obtained, check the Identity & Time
+	// 当集群中有这个lease对象存在的时候判断二个是否一致
 	if !bytes.Equal(le.observedRawRecord, oldLeaderElectionRawRecord) {
 		le.setObservedRecord(oldLeaderElectionRecord)
 
 		le.observedRawRecord = oldLeaderElectionRawRecord
 	}
+
+	// 判断锁是否过期了
 	if len(oldLeaderElectionRecord.HolderIdentity) > 0 &&
 		le.observedTime.Add(le.config.LeaseDuration).After(now.Time) &&
+
+		// 判断是自己是否leader
 		!le.IsLeader() {
 		klog.V(4).Infof("lock is held by %v and has not yet expired", oldLeaderElectionRecord.HolderIdentity)
 		return false
@@ -355,10 +396,13 @@ func (le *LeaderElector) tryAcquireOrRenew(ctx context.Context) bool {
 
 	// 3. We're going to try to update. The leaderElectionRecord is set to it's default
 	// here. Let's correct it before updating.
+	// 当我们没过期
 	if le.IsLeader() {
+		// 自己本身就是leader则不需要更新AcquireTime和LeaderTransitions
 		leaderElectionRecord.AcquireTime = oldLeaderElectionRecord.AcquireTime
 		leaderElectionRecord.LeaderTransitions = oldLeaderElectionRecord.LeaderTransitions
 	} else {
+		// 首次自己变为leader则更新leader的更换次数
 		leaderElectionRecord.LeaderTransitions = oldLeaderElectionRecord.LeaderTransitions + 1
 	}
 
@@ -368,6 +412,7 @@ func (le *LeaderElector) tryAcquireOrRenew(ctx context.Context) bool {
 		return false
 	}
 
+	// 更新锁资源，这里如果在 Get 和 Update 之间有变化，将会更新失败
 	le.setObservedRecord(&leaderElectionRecord)
 	return true
 }

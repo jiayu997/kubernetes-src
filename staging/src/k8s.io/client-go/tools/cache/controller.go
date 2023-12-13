@@ -188,6 +188,7 @@ func (c *controller) Run(stopCh <-chan struct{}) {
 }
 
 // Returns true once this controller has completed an initial resource listing
+// 这个queue是：Delta FIFO
 func (c *controller) HasSynced() bool {
 	return c.config.Queue.HasSynced()
 }

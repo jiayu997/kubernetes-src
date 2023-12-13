@@ -40,11 +40,16 @@ type LeaseLock struct {
 // Get returns the election record from a Lease spec
 func (ll *LeaseLock) Get(ctx context.Context) (*LeaderElectionRecord, []byte, error) {
 	var err error
+	// 从k8s中获取lease对象
 	ll.lease, err = ll.Client.Leases(ll.LeaseMeta.Namespace).Get(ctx, ll.LeaseMeta.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// 根据lease对象信息将其转成LeaderElectionRecord struct
 	record := LeaseSpecToLeaderElectionRecord(&ll.lease.Spec)
+
+	// 序列化
 	recordByte, err := json.Marshal(*record)
 	if err != nil {
 		return nil, nil, err

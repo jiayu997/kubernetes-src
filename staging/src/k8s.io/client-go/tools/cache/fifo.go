@@ -159,6 +159,7 @@ func (f *FIFO) Close() {
 
 // HasSynced returns true if an Add/Update/Delete/AddIfNotPresent are called first,
 // or the first batch of items inserted by Replace() has been popped.
+// 这里并没有阻塞
 func (f *FIFO) HasSynced() bool {
 	f.lock.Lock()
 	defer f.lock.Unlock()

@@ -22,8 +22,6 @@ import (
 	"runtime"
 	"sync"
 	"time"
-
-	"k8s.io/klog/v2"
 )
 
 var (
@@ -34,6 +32,7 @@ var (
 )
 
 // PanicHandlers is a list of functions which will be invoked when a panic happens.
+// 默认的是记录日志
 var PanicHandlers = []func(interface{}){logPanic}
 
 // HandleCrash simply catches a crash and logs an error. Meant to be called via

@@ -48,11 +48,20 @@ type LeaderElectionRecord struct {
 	// attempt to acquire leases with empty identities and will wait for the full lease
 	// interval to expire before attempting to reacquire. This value is set to empty when
 	// a client voluntarily steps down.
-	HolderIdentity       string      `json:"holderIdentity"`
-	LeaseDurationSeconds int         `json:"leaseDurationSeconds"`
-	AcquireTime          metav1.Time `json:"acquireTime"`
-	RenewTime            metav1.Time `json:"renewTime"`
-	LeaderTransitions    int         `json:"leaderTransitions"`
+	// 持有锁进程的标识，一般可以利用主机名
+	HolderIdentity string `json:"holderIdentity"`
+
+	// lock的租约
+	LeaseDurationSeconds int `json:"leaseDurationSeconds"`
+
+	// 持有锁的时间
+	AcquireTime metav1.Time `json:"acquireTime"`
+
+	// 更新时间
+	RenewTime metav1.Time `json:"renewTime"`
+
+	// leader更换的次数
+	LeaderTransitions int `json:"leaderTransitions"`
 }
 
 // EventRecorder records a change in the ResourceLock.
@@ -123,17 +132,22 @@ func New(lockType string, ns string, name string, coreClient corev1.CoreV1Interf
 		LockConfig: rlc,
 	}
 	switch lockType {
+	// 保存在endpoints
 	case EndpointsResourceLock:
 		return endpointsLock, nil
+	// 保存在configmaps
 	case ConfigMapsResourceLock:
 		return configmapLock, nil
+	// 保存在leases
 	case LeasesResourceLock:
 		return leaseLock, nil
+	// 优先尝试保存在endpoint失败时保存在lease
 	case EndpointsLeasesResourceLock:
 		return &MultiLock{
 			Primary:   endpointsLock,
 			Secondary: leaseLock,
 		}, nil
+	// 优先尝试保存在configmap，失败时保存在lease
 	case ConfigMapsLeasesResourceLock:
 		return &MultiLock{
 			Primary:   configmapLock,

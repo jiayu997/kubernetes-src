@@ -24,7 +24,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/sets"
 
-	"k8s.io/klog/v2"
 	utiltrace "k8s.io/utils/trace"
 )
 
@@ -618,6 +617,7 @@ func (f *DeltaFIFO) Pop(process PopProcessFunc) (interface{}, error) {
 		// 获取现在queue的长度
 		depth := len(f.queue)
 		if f.initialPopulationCount > 0 {
+			// 队列长度-1
 			f.initialPopulationCount--
 		}
 
